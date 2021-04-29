@@ -1,0 +1,1339 @@
+#ifndef ART_DETAIL_ART_NODES_HEADER_INCLUDED
+#define ART_DETAIL_ART_NODES_HEADER_INCLUDED
+
+#include "tree_depth.h"
+
+#if !defined(NDEBUG)
+#include <cstdlib>
+#include <iomanip>
+#include <iostream>
+#endif
+
+#if defined(__SSE2__)
+#include <emmintrin.h>
+#include <smmintrin.h>
+#endif
+
+#include <algorithm>
+
+namespace art
+{
+namespace detail
+{
+
+// On x86_64 with GCC up to and including version 10, __builtin_ffs compiles to
+// BSF/CMOVE pair if TZCNT is not available. CMOVE is only required if arg is
+// zero, which we know not to be. Only GCC 11 gets the hint by "if (arg == 0)
+// __builtin_unreachable()"
+[[gnu::const]] inline unsigned ffs_nonzero(std::uint64_t arg) noexcept
+{
+    std::int64_t result;
+#ifdef __x86_64
+    __asm__("bsfq %1, %0" : "=r"(result) : "rm"(arg) : "cc");
+    return static_cast<unsigned>(result + 1);
+#else
+    return static_cast<unsigned>(__builtin_ffsl(static_cast<std::int64_t>(arg)));
+#endif
+}
+
+// LCOV_EXCL_START
+[[noreturn]] inline void cannot_happen(const char* file, int line, const char* func)
+{
+#ifndef NDEBUG
+    std::cerr << "Execution reached an unreachable point at " << file << ':' << line << ": " << func
+              << '\n';
+    std::abort();
+#else
+    __builtin_unreachable();
+#endif
+}
+// LCOV_EXCL_STOP
+
+#define CANNOT_HAPPEN() cannot_happen(__FILE__, __LINE__, __func__)
+
+inline void dump_byte(std::ostream& os, std::uint8_t byte)
+{
+    os << ' ' << std::hex << std::setfill('0') << std::setw(2) << static_cast<unsigned>(byte)
+       << std::dec;
+}
+
+// template <typename BitwiseKey>
+//[[gnu::cold, gnu::noinline]] std::ostream& operator<<(std::ostream& os, BitwiseKey key);
+
+template <typename Db> class basic_inode_impl
+{
+public:
+    using header_type = typename Db::header_type;
+    using leaf_type = typename Db::leaf_type;
+
+    using inode_type = basic_inode_impl<Db>;
+    using inode4_type = basic_inode_4<Db>;
+    using inode16_type = basic_inode_16<Db>;
+    using inode48_type = basic_inode_48<Db>;
+    using inode256_type = basic_inode_256<Db>;
+
+    using node_ptr = basic_node_ptr<leaf_type, inode_type, inode4_type, inode16_type, inode48_type,
+                                    inode256_type>;
+
+    using db_leaf_unique_ptr = basic_db_leaf_unique_ptr<leaf_type, Db>;
+
+    using bitwise_key = typename Db::bitwise_key;
+
+    using reclaim_node_ptr_at_scope_exit_type =
+        basic_reclaim_db_node_ptr_at_scope_exit<node_ptr, Db>;
+
+    // The first element is the child index in the node, the 2nd is pointer
+    // to the child. If not present, the pointer is nullptr, and the index
+    // is undefined
+    using find_result = std::pair<std::uint8_t, node_ptr*>;
+
+public:
+    using key_prefix_size = std::uint8_t;
+
+private:
+    static constexpr key_prefix_size key_prefix_capacity = 7;
+
+    // Padding between minimum node_header and an actual header type used
+    static constexpr auto header_extra_size = sizeof(header_type) - sizeof(default_header);
+    static constexpr auto header_pad_u32 = (header_extra_size >> 3U) << 1U;
+    static constexpr auto header_pad_bytes = header_pad_u32 * 4;
+
+public:
+    using key_prefix_data = std::array<std::uint8_t, key_prefix_capacity + header_pad_bytes>;
+
+    [[nodiscard, gnu::pure]] constexpr auto get_shared_key_prefix_length(
+        bitwise_key shifted_key) const noexcept
+    {
+        const auto prefix_u64 = header_as_uint64() >> 8U;
+        return shared_len(static_cast<std::uint64_t>(shifted_key.to_key()), prefix_u64,
+                          key_prefix_length());
+    }
+
+    [[nodiscard]] constexpr unsigned key_prefix_length() const noexcept
+    {
+        const auto result = f.f.key_prefix_length;
+        assert(result <= key_prefix_capacity);
+        return result;
+    }
+
+    constexpr void cut_key_prefix(unsigned cut_len) noexcept
+    {
+        assert(cut_len > 0);
+        assert(cut_len <= key_prefix_length());
+
+        const auto type = static_cast<std::uint8_t>(f.header.type());
+        const auto prefix_u64 = header_as_uint64();
+        const auto cut_prefix_u64 = ((prefix_u64 >> (cut_len * 8)) & key_bytes_mask) | type;
+        set_header(cut_prefix_u64);
+
+        f.f.key_prefix_length = static_cast<key_prefix_size>(key_prefix_length() - cut_len);
+    }
+
+    constexpr void prepend_key_prefix(const basic_inode_impl& prefix1,
+                                      std::uint8_t prefix2) noexcept
+    {
+        assert(key_prefix_length() + prefix1.key_prefix_length() < key_prefix_capacity);
+
+        const auto type = static_cast<std::uint8_t>(f.header.type());
+        const auto prefix_u64 = header_as_uint64() & key_bytes_mask;
+        const auto trailing_prefix_shift = (prefix1.key_prefix_length() + 1U) * 8U;
+        const auto shifted_prefix_u64 = prefix_u64 << trailing_prefix_shift;
+        const auto shifted_prefix2 = static_cast<std::uint64_t>(prefix2) << trailing_prefix_shift;
+        const auto prefix1_mask = ((1ULL << trailing_prefix_shift) - 1) ^ 0xFFU;
+        const auto masked_prefix1 = prefix1.header_as_uint64() & prefix1_mask;
+        const auto prefix_result = shifted_prefix_u64 | shifted_prefix2 | masked_prefix1 | type;
+        set_header(prefix_result);
+
+        f.f.key_prefix_length =
+            static_cast<key_prefix_size>(key_prefix_length() + prefix1.key_prefix_length() + 1);
+    }
+
+    [[nodiscard]] constexpr const auto& get_key_prefix() const noexcept { return f.f.key_prefix; }
+
+    [[gnu::cold, gnu::noinline]] void dump_key_prefix(std::ostream& os) const
+    {
+        const auto len = key_prefix_length();
+        os << ", key prefix len = " << static_cast<unsigned>(len);
+        if (len > 0) {
+            os << ", key prefix =";
+            for (std::size_t i = 0; i < len; ++i)
+                dump_byte(os, f.f.key_prefix[i]);
+        }
+    }
+
+    [[nodiscard]] node_type type() const noexcept { return this->f.header.type(); }
+
+    [[gnu::cold, gnu::noinline]] void dump(std::ostream& os) const
+    {
+        switch (this->f.header.type()) {
+        case node_type::I4:
+            os << "I4: ";
+            break;
+        case node_type::I16:
+            os << "I16: ";
+            break;
+        case node_type::I48:
+            os << "I48: ";
+            break;
+        case node_type::I256:
+            os << "I256: ";
+            break;
+            // LCOV_EXCL_START
+        case node_type::LEAF:
+            CANNOT_HAPPEN();
+            // LCOV_EXCL_STOP
+        }
+        os << "# children = "
+           << (f.f.children_count == 0 ? 256 : static_cast<unsigned>(f.f.children_count));
+        dump_key_prefix(os);
+        switch (this->f.header.type()) {
+        case node_type::I4:
+            static_cast<const inode4_type*>(this)->dump(os);
+            break;
+        case node_type::I16:
+            static_cast<const inode16_type*>(this)->dump(os);
+            break;
+        case node_type::I48:
+            static_cast<const inode48_type*>(this)->dump(os);
+            break;
+        case node_type::I256:
+            static_cast<const inode256_type*>(this)->dump(os);
+            break;
+            // LCOV_EXCL_START
+        case node_type::LEAF:
+            CANNOT_HAPPEN();
+            // LCOV_EXCL_STOP
+        }
+    }
+
+    constexpr void add(db_leaf_unique_ptr&& child, tree_depth depth) noexcept
+    {
+        assert(!is_full());
+        assert(child.get() != nullptr);
+
+        switch (this->f.header.type()) {
+        case node_type::I4:
+            static_cast<inode4_type*>(this)->add(std::move(child), depth);
+            break;
+        case node_type::I16:
+            static_cast<inode16_type*>(this)->add(std::move(child), depth);
+            break;
+        case node_type::I48:
+            static_cast<inode48_type*>(this)->add(std::move(child), depth);
+            break;
+        case node_type::I256:
+            static_cast<inode256_type*>(this)->add(std::move(child), depth);
+            break;
+            // LCOV_EXCL_START
+        case node_type::LEAF:
+            CANNOT_HAPPEN();
+            // LCOV_EXCL_STOP
+        }
+    }
+
+    constexpr void remove(std::uint8_t child_index, Db& db_instance) noexcept
+    {
+        assert(!is_min_size());
+
+        switch (this->f.header.type()) {
+        case node_type::I4:
+            static_cast<inode4_type*>(this)->remove(child_index, db_instance);
+            break;
+        case node_type::I16:
+            static_cast<inode16_type*>(this)->remove(child_index, db_instance);
+            break;
+        case node_type::I48:
+            static_cast<inode48_type*>(this)->remove(child_index, db_instance);
+            break;
+        case node_type::I256:
+            static_cast<inode256_type*>(this)->remove(child_index, db_instance);
+            break;
+            // LCOV_EXCL_START
+        case node_type::LEAF:
+            CANNOT_HAPPEN();
+            // LCOV_EXCL_STOP
+        }
+    }
+
+    constexpr void delete_subtree(Db& db_instance) noexcept
+    {
+        switch (this->f.header.type()) {
+        case node_type::I4:
+            return static_cast<inode4_type*>(this)->delete_subtree(db_instance);
+        case node_type::I16:
+            return static_cast<inode16_type*>(this)->delete_subtree(db_instance);
+        case node_type::I48:
+            return static_cast<inode48_type*>(this)->delete_subtree(db_instance);
+        case node_type::I256:
+            return static_cast<inode256_type*>(this)->delete_subtree(db_instance);
+            // LCOV_EXCL_START
+        case node_type::LEAF:
+            CANNOT_HAPPEN();
+            // LCOV_EXCL_STOP
+        }
+    }
+
+    [[nodiscard]] constexpr find_result find_child(node_type type, std::uint8_t key_byte) noexcept
+    {
+        assert(type != node_type::LEAF);
+        // type == this->f.header.type(), but this node can be updated in parallel
+        // in OLC. Even though the node type byte stays constant, the header word
+        // containing it does not, so don't risk it. Because of the same parallel
+        // updates, the callees below may work on inconsistent nodes and must not
+        // assert, just produce results, which are OK to be incorrect/inconsistent
+        // as the node state will be checked before acting on them.
+
+        switch (type) {
+        case node_type::I4:
+            return static_cast<inode4_type*>(this)->find_child(key_byte);
+        case node_type::I16:
+            return static_cast<inode16_type*>(this)->find_child(key_byte);
+        case node_type::I48:
+            return static_cast<inode48_type*>(this)->find_child(key_byte);
+        case node_type::I256:
+            return static_cast<inode256_type*>(this)->find_child(key_byte);
+            // LCOV_EXCL_START
+        case node_type::LEAF:
+            CANNOT_HAPPEN();
+        }
+        CANNOT_HAPPEN();
+        // LCOV_EXCL_STOP
+    }
+
+    [[nodiscard]] constexpr bool is_full() const noexcept
+    {
+        switch (this->f.header.type()) {
+        case node_type::I4:
+            return static_cast<const inode4_type*>(this)->is_full();
+        case node_type::I16:
+            return static_cast<const inode16_type*>(this)->is_full();
+        case node_type::I48:
+            return static_cast<const inode48_type*>(this)->is_full();
+        case node_type::I256:
+            return static_cast<const inode256_type*>(this)->is_full();
+            // LCOV_EXCL_START
+        case node_type::LEAF:
+            CANNOT_HAPPEN();
+        }
+        CANNOT_HAPPEN();
+        // LCOV_EXCL_STOP
+    }
+
+    [[nodiscard]] constexpr bool is_min_size() const noexcept
+    {
+        switch (this->f.header.type()) {
+        case node_type::I4:
+            return static_cast<const inode4_type*>(this)->is_min_size();
+        case node_type::I16:
+            return static_cast<const inode16_type*>(this)->is_min_size();
+        case node_type::I48:
+            return static_cast<const inode48_type*>(this)->is_min_size();
+        case node_type::I256:
+            return static_cast<const inode256_type*>(this)->is_min_size();
+            // LCOV_EXCL_START
+        case node_type::LEAF:
+            CANNOT_HAPPEN();
+        }
+        CANNOT_HAPPEN();
+        // LCOV_EXCL_STOP
+    }
+
+    constexpr basic_inode_impl(node_type type, unsigned children_count, bitwise_key k1,
+                               bitwise_key k2, tree_depth depth) noexcept
+        : f{type, k1, k2, depth, children_count}
+    {
+        assert(type != node_type::LEAF);
+    }
+
+    constexpr basic_inode_impl(node_type type, unsigned children_count, unsigned key_prefix_len,
+                               const inode_type& key_prefix_source_node) noexcept
+        : f{type, children_count, key_prefix_len, key_prefix_source_node}
+    {
+        assert(type != node_type::LEAF);
+    }
+
+    constexpr basic_inode_impl(node_type type, unsigned children_count,
+                               const basic_inode_impl& other) noexcept
+        : f{type, children_count, other}
+    {
+        assert(type != node_type::LEAF);
+    }
+
+protected:
+    static constexpr auto key_bytes_mask = 0xFFFFFFFF'FFFFFF00ULL;
+
+    [[nodiscard, gnu::const]] constexpr std::uint64_t header_as_uint64() const noexcept
+    {
+        return static_cast<std::uint64_t>(f.u32[1]) << 32U | f.u32[0];
+    }
+
+    [[nodiscard, gnu::pure]] static constexpr unsigned shared_len(std::uint64_t k1,
+                                                                  std::uint64_t k2,
+                                                                  unsigned clamp_byte_pos) noexcept
+    {
+        assert(clamp_byte_pos < 8);
+
+        const auto diff = k1 ^ k2;
+        const auto clamped = diff | (1ULL << (clamp_byte_pos * 8U));
+        return (ffs_nonzero(clamped) - 1) >> 3U;
+    }
+
+    constexpr void set_header(std::uint64_t u64) noexcept
+    {
+        f.u32[0] = static_cast<std::uint32_t>(u64 & 0xFFFFFFFFULL);
+        f.u32[1] = static_cast<std::uint32_t>(u64 >> 32U);
+    }
+
+    union inode_union {
+        struct inode_fields {
+            const node_type type;
+            key_prefix_data key_prefix;
+            key_prefix_size key_prefix_length;
+            std::uint8_t children_count;
+        } f;
+        header_type header;
+        std::array<std::uint32_t, 2 + header_pad_u32> u32;
+
+        static void static_asserts() noexcept
+        {
+            static_assert(offsetof(inode_fields, type) == 0);
+            static_assert(offsetof(inode_fields, key_prefix_data) == 1);
+            static_assert(offsetof(inode_fields, key_prefix_length) == 8 + header_pad_u32 * 4);
+            static_assert(offsetof(inode_fields, children_count) == 9 + header_pad_u32 * 4);
+            static_assert(sizeof(inode_fields) == 10 + header_pad_u32 * 4);
+        }
+
+        inode_union(node_type type, bitwise_key k1, bitwise_key shifted_k2, tree_depth depth,
+                    unsigned children_count) noexcept
+        {
+            k1.shift_right(depth);
+
+            const auto k1_u64 = static_cast<std::uint64_t>(k1);
+
+            u32[0] = static_cast<std::uint32_t>(static_cast<std::uint32_t>(type) |
+                                                (k1_u64 & 0xFFFFFFFULL) << 8U);
+            u32[1] = static_cast<std::uint32_t>(k1_u64 >> 24U);
+
+            f.key_prefix_length = static_cast<key_prefix_size>(
+                shared_len(k1_u64, static_cast<std::uint64_t>(shifted_k2), key_prefix_capacity));
+            f.children_count = static_cast<std::uint8_t>(children_count);
+        }
+
+        inode_union(node_type type, unsigned children_count, unsigned key_prefix_len,
+                    const basic_inode_impl& key_prefix_source_node) noexcept
+        {
+            assert(key_prefix_len <= key_prefix_capacity);
+
+            u32[0] =
+                (key_prefix_source_node.f.u32[0] & 0xFFFFFF00U) | static_cast<std::uint8_t>(type);
+            u32[1] = key_prefix_source_node.f.u32[1];
+            f.key_prefix_length = static_cast<key_prefix_size>(key_prefix_len);
+            f.children_count = static_cast<std::uint8_t>(children_count);
+        }
+
+        inode_union(node_type type, unsigned children_count, const basic_inode_impl& other) noexcept
+            : inode_union{type, children_count, other.key_prefix_length(), other}
+        {
+        }
+
+    } f;
+};
+
+template <typename Db, unsigned MinSize, unsigned Capacity, node_type NodeType,
+          class SmallerDerived, class LargerDerived, class Derived>
+class basic_inode : public basic_inode_impl<Db>
+{
+    static_assert(NodeType != node_type::LEAF);
+    static_assert(!std::is_same<Derived, LargerDerived>::value);
+    static_assert(!std::is_same<SmallerDerived, Derived>::value);
+    static_assert(!std::is_same<SmallerDerived, LargerDerived>::value);
+    static_assert(MinSize < Capacity);
+
+    using parent_type = basic_inode_impl<Db>;
+
+public:
+    using db_leaf_unique_ptr = typename parent_type::db_leaf_unique_ptr;
+    using header_type = typename parent_type::header_type;
+    using bitwise_key = typename parent_type::bitwise_key;
+    using reclaim_node_ptr_at_scope_exit_type =
+        typename parent_type::reclaim_node_ptr_at_scope_exit_type;
+
+    [[nodiscard]] static constexpr auto create(std::unique_ptr<LargerDerived>&& source_node,
+                                               std::uint8_t child_to_delete, Db& db_instance)
+    {
+        return std::make_unique<Derived>(std::move(source_node), child_to_delete, db_instance);
+    }
+
+    [[nodiscard]] static constexpr auto create(std::unique_ptr<SmallerDerived>&& source_node,
+                                               db_leaf_unique_ptr&& child, tree_depth depth)
+    {
+        return std::make_unique<Derived>(std::move(source_node), std::move(child), depth);
+    }
+
+    [[nodiscard]] constexpr bool is_full() const noexcept
+    {
+        assert(this->type() == NodeType);
+
+        return this->f.f.children_count == capacity;
+    }
+
+    [[nodiscard]] constexpr bool is_min_size() const noexcept
+    {
+        assert(this->type() == NodeType);
+
+        return this->f.f.children_count == min_size;
+    }
+
+    static constexpr auto min_size = MinSize;
+    static constexpr auto capacity = Capacity;
+    static constexpr auto static_node_type = NodeType;
+
+    using smaller_derived_type = SmallerDerived;
+    using inode_type = typename basic_inode_impl<Db>::inode_type;
+
+protected:
+    constexpr basic_inode(bitwise_key k1, bitwise_key k2, tree_depth depth) noexcept
+        : basic_inode_impl<Db>{NodeType, MinSize, k1, k2, depth}
+    {
+        assert(is_min_size());
+    }
+
+    constexpr basic_inode(unsigned key_prefix_len,
+                          const inode_type& key_prefix_source_node) noexcept
+        : basic_inode_impl<Db>{NodeType, MinSize, key_prefix_len, key_prefix_source_node}
+    {
+        assert(is_min_size());
+    }
+
+    explicit constexpr basic_inode(const SmallerDerived& source_node) noexcept
+        : basic_inode_impl<Db>{NodeType, MinSize, source_node}
+    {
+        assert(source_node.is_full());
+        assert(is_min_size());
+    }
+
+    explicit constexpr basic_inode(const LargerDerived& source_node) noexcept
+        : basic_inode_impl<Db>{NodeType, Capacity, source_node}
+    {
+        assert(source_node.is_min_size());
+        assert(is_full());
+    }
+};
+
+// A class used as a sentinel for basic_inode template args: the
+// larger node type for the largest node type and the smaller node type for
+// the smallest node type.
+class fake_inode final
+{
+public:
+    fake_inode() = delete;
+};
+
+template <typename Db>
+using basic_inode_4_parent =
+    basic_inode<Db, 2, 4, node_type::I4, fake_inode, basic_inode_16<Db>, basic_inode_4<Db>>;
+
+template <typename Db> class basic_inode_4 : public basic_inode_4_parent<Db>
+{
+    using parent_type = basic_inode_4_parent<Db>;
+    using bitwise_key = typename parent_type::bitwise_key;
+    using inode4_type = typename parent_type::inode4_type;
+    using inode16_type = typename parent_type::inode16_type;
+
+    using node_ptr = typename parent_type::node_ptr;
+    using leaf_type = typename parent_type::leaf_type;
+    using db_leaf_unique_ptr = typename parent_type::db_leaf_unique_ptr;
+    using reclaim_node_ptr_at_scope_exit_type =
+        typename parent_type::reclaim_node_ptr_at_scope_exit_type;
+    using find_result = typename parent_type::find_result;
+
+public:
+    // Create a new node with two given child nodes
+    [[nodiscard]] static constexpr auto create(bitwise_key k1, bitwise_key shifted_k2,
+                                               tree_depth depth, node_ptr child1,
+                                               db_leaf_unique_ptr&& child2)
+    {
+        return std::make_unique<inode4_type>(k1, shifted_k2, depth, child1, std::move(child2));
+    }
+
+    using parent_type::create;
+
+    // Create a new node, split the key prefix of an existing node, and make the
+    // new node contain that existing node and a given new node which caused this
+    // key prefix split.
+    [[nodiscard]] static constexpr auto create(node_ptr source_node, unsigned len, tree_depth depth,
+                                               db_leaf_unique_ptr&& child1)
+    {
+        return std::make_unique<inode4_type>(source_node, len, depth, std::move(child1));
+    }
+
+    constexpr basic_inode_4(bitwise_key k1, bitwise_key shifted_k2, tree_depth depth,
+                            node_ptr child1, db_leaf_unique_ptr&& child2) noexcept
+        : parent_type{k1, shifted_k2, depth}
+    {
+        const auto k2_next_byte_depth = this->key_prefix_length();
+        const auto k1_next_byte_depth = k2_next_byte_depth + depth;
+        add_two_to_empty(k1[k1_next_byte_depth], child1, shifted_k2[k2_next_byte_depth],
+                         std::move(child2));
+    }
+
+    constexpr basic_inode_4(node_ptr source_node, unsigned len, tree_depth depth,
+                            db_leaf_unique_ptr&& child1) noexcept
+        : parent_type{len, *source_node.internal}
+    {
+        assert(source_node.type() != node_type::LEAF);
+        assert(len < source_node.internal->key_prefix_length());
+        // assert(depth + len < art_key::size);
+
+        const auto source_node_key_byte = source_node.internal->get_key_prefix()[len];
+        source_node.internal->cut_key_prefix(len + 1);
+        const auto new_key_byte = leaf_type::key(child1.get())[depth + len];
+        add_two_to_empty(source_node_key_byte, source_node, new_key_byte, std::move(child1));
+    }
+
+    constexpr basic_inode_4(std::unique_ptr<inode16_type> source_node, std::uint8_t child_to_delete,
+                            // cppcheck-suppress constParameter
+                            Db& db_instance)
+        : parent_type{*source_node}
+    {
+        const auto* source_keys_itr = source_node->keys.byte_array.cbegin();
+        auto* keys_itr = keys.byte_array.begin();
+        const auto* source_children_itr = source_node->children.cbegin();
+        auto* children_itr = children.begin();
+
+        while (source_keys_itr != source_node->keys.byte_array.cbegin() + child_to_delete) {
+            *keys_itr++ = *source_keys_itr++;
+            *children_itr++ = *source_children_itr++;
+        }
+
+        reclaim_node_ptr_at_scope_exit_type reclaim_on_scope_exit{*source_children_itr,
+                                                                  db_instance};
+
+        ++source_keys_itr;
+        ++source_children_itr;
+
+        while (source_keys_itr != source_node->keys.byte_array.cbegin() + inode16_type::min_size) {
+            *keys_itr++ = *source_keys_itr++;
+            *children_itr++ = *source_children_itr++;
+        }
+
+        assert(std::is_sorted(keys.byte_array.cbegin(),
+                              keys.byte_array.cbegin() + this->f.f.children_count));
+    }
+
+    constexpr void add(db_leaf_unique_ptr child, tree_depth depth) noexcept
+    {
+        assert(this->type() == basic_inode_4::static_node_type);
+
+        auto children_count = this->f.f.children_count;
+
+        assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+
+        const auto key_byte = static_cast<std::uint8_t>(leaf_type::key(child.get())[depth]);
+
+        const auto first_lt = ((keys.integer & 0xFFU) < key_byte) ? 1 : 0;
+        const auto second_lt = (((keys.integer >> 8U) & 0xFFU) < key_byte) ? 1 : 0;
+        const auto third_lt =
+            ((children_count == 3) && ((keys.integer >> 16U) & 0xFFU) < key_byte) ? 1 : 0;
+        const auto insert_pos_index = static_cast<unsigned>(first_lt + second_lt + third_lt);
+
+        for (typename decltype(keys.byte_array)::size_type i = children_count; i > insert_pos_index;
+             --i) {
+            keys.byte_array[i] = keys.byte_array[i - 1];
+            // TODO(laurynas): Node4 children fit into a single YMM register on AVX
+            // onwards, see if it is possible to do shift/insert with it. Checked
+            // plain AVX, it seems that at least AVX2 is required.
+            children[i] = children[i - 1];
+        }
+        keys.byte_array[insert_pos_index] = static_cast<std::uint8_t>(key_byte);
+        children[insert_pos_index] = child.release();
+
+        ++children_count;
+        this->f.f.children_count = children_count;
+
+        assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+    }
+
+    constexpr void remove(std::uint8_t child_index, Db& db_instance) noexcept
+    {
+        assert(this->type() == basic_inode_4::static_node_type);
+
+        auto children_count = this->f.f.children_count;
+
+        assert(child_index < children_count);
+        assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+
+        reclaim_node_ptr_at_scope_exit_type reclaim_on_scope_exit{children[child_index],
+                                                                  db_instance};
+
+        for (typename decltype(keys.byte_array)::size_type i = child_index;
+             i < static_cast<unsigned>(this->f.f.children_count - 1); ++i) {
+            // TODO(laurynas): see the AVX2 TODO at add method
+            keys.byte_array[i] = keys.byte_array[i + 1];
+            children[i] = children[i + 1];
+        }
+
+        --children_count;
+        this->f.f.children_count = children_count;
+
+        assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+    }
+
+    constexpr auto leave_last_child(std::uint8_t child_to_delete, Db& db_instance) noexcept
+    {
+        assert(this->is_min_size());
+        assert(child_to_delete == 0 || child_to_delete == 1);
+        assert(this->type() == basic_inode_4::static_node_type);
+
+        const auto child_to_delete_ptr = children[child_to_delete];
+        const std::uint8_t child_to_leave = (child_to_delete == 0) ? 1 : 0;
+        const auto child_to_leave_ptr = children[child_to_leave];
+        reclaim_node_ptr_at_scope_exit_type reclaim_on_scope_exit{child_to_delete_ptr, db_instance};
+        if (child_to_leave_ptr.type() != node_type::LEAF) {
+            child_to_leave_ptr.internal->prepend_key_prefix(*this, keys.byte_array[child_to_leave]);
+        }
+        return child_to_leave_ptr;
+    }
+
+    [[nodiscard, gnu::pure]] find_result find_child(std::uint8_t key_byte) noexcept
+    {
+#if defined(__SSE2__)
+        const auto replicated_search_key = _mm_set1_epi8(static_cast<char>(key_byte));
+        const auto keys_in_sse_reg = _mm_cvtsi32_si128(static_cast<std::int32_t>(keys.integer));
+        const auto matching_key_positions = _mm_cmpeq_epi8(replicated_search_key, keys_in_sse_reg);
+        const auto mask = (1U << this->f.f.children_count) - 1;
+        const auto bit_field =
+            static_cast<unsigned>(_mm_movemask_epi8(matching_key_positions)) & mask;
+        if (bit_field != 0) {
+            const auto i = static_cast<unsigned>(__builtin_ctz(bit_field));
+            return std::make_pair(i, &children[i]);
+        }
+        return std::make_pair(0xFF, nullptr);
+#else  // No SSE
+       // Bit twiddling:
+       // contains_byte:     __builtin_ffs:   for key index:
+       //    0x80000000               0x20                3
+       //      0x800000               0x18                2
+       //      0x808000               0x10                1
+       //          0x80                0x8                0
+       //           0x0                0x0        not found
+        const auto result = static_cast<decltype(keys.byte_array)::size_type>(
+            // __builtin_ffs takes signed argument:
+            // NOLINTNEXTLINE(hicpp-signed-bitwise)
+            __builtin_ffs(static_cast<std::int32_t>(contains_byte(keys.integer, key_byte))) >> 3);
+
+        if ((result == 0) || (result > this->children_count))
+            return std::make_pair(0xFF, nullptr);
+
+        return std::make_pair(result - 1, &children[result - 1]);
+#endif // __SSE__
+    }
+
+    constexpr void delete_subtree(Db& db_instance) noexcept
+    {
+        const auto children_count_copy = this->f.f.children_count;
+        for (std::uint8_t i = 0; i < children_count_copy; ++i) {
+            db_instance.delete_subtree(children[i]);
+        }
+    }
+
+    [[gnu::cold, gnu::noinline]] void dump(std::ostream& os) const
+    {
+        const auto children_count_copy = this->f.f.children_count;
+        os << ", key bytes =";
+        for (std::uint8_t i = 0; i < children_count_copy; i++)
+            dump_byte(os, this->keys.byte_array[i]);
+        os << ", children:\n";
+        for (std::uint8_t i = 0; i < children_count_copy; i++)
+            dump_node(os, children[i]);
+    }
+
+protected:
+    constexpr void add_two_to_empty(std::uint8_t key1, node_ptr child1, std::uint8_t key2,
+                                    db_leaf_unique_ptr child2) noexcept
+    {
+        assert(key1 != key2);
+        assert(this->f.f.children_count == 2);
+
+        const std::uint8_t key1_i = key1 < key2 ? 0 : 1;
+        const std::uint8_t key2_i = key1_i == 0 ? 1 : 0;
+        this->keys.byte_array[key1_i] = key1;
+        this->children[key1_i] = child1;
+        this->keys.byte_array[key2_i] = key2;
+        this->children[key2_i] = child2.release();
+        keys.byte_array[2] = std::uint8_t{0};
+        keys.byte_array[3] = std::uint8_t{0};
+
+        assert(std::is_sorted(this->keys.byte_array.cbegin(),
+                              this->keys.byte_array.cbegin() + this->f.f.children_count));
+    }
+
+    union {
+        std::array<std::uint8_t, basic_inode_4::capacity> byte_array;
+        std::uint32_t integer;
+    } keys;
+
+    std::array<node_ptr, basic_inode_4::capacity> children;
+
+private:
+    template <class> friend class basic_inode_16;
+};
+
+template <typename Db>
+using basic_inode_16_parent = basic_inode<Db, 5, 16, node_type::I16, basic_inode_4<Db>,
+                                          basic_inode_48<Db>, basic_inode_16<Db>>;
+
+template <typename Db> class basic_inode_16 : public basic_inode_16_parent<Db>
+{
+private:
+    using parent_type = basic_inode_16_parent<Db>;
+    using inode4_type = typename parent_type::inode4_type;
+    using inode16_type = typename parent_type::inode16_type;
+    using inode48_type = typename parent_type::inode48_type;
+    using leaf_type = typename parent_type::leaf_type;
+    using node_ptr = typename parent_type::node_ptr;
+    using reclaim_node_ptr_at_scope_exit_type =
+        typename parent_type::reclaim_node_ptr_at_scope_exit_type;
+
+public:
+    using db_leaf_unique_ptr = typename parent_type::db_leaf_unique_ptr;
+    using find_result = typename basic_inode_impl<Db>::find_result;
+
+    constexpr basic_inode_16(std::unique_ptr<inode4_type> source_node, db_leaf_unique_ptr child,
+                             tree_depth depth) noexcept
+        : parent_type{*source_node}
+    {
+        const auto key_byte = static_cast<std::uint8_t>(leaf_type::key(child.get())[depth]);
+
+        const auto keys_integer = source_node->keys.integer;
+        const auto first_lt = ((keys_integer & 0xFFU) < key_byte) ? 1 : 0;
+        const auto second_lt = (((keys_integer >> 8U) & 0xFFU) < key_byte) ? 1 : 0;
+        const auto third_lt = (((keys_integer >> 16U) & 0xFFU) < key_byte) ? 1 : 0;
+        const auto fourth_lt = (((keys_integer >> 24U) & 0xFFU) < key_byte) ? 1 : 0;
+        const auto insert_pos_index =
+            static_cast<unsigned>(first_lt + second_lt + third_lt + fourth_lt);
+
+        unsigned i = 0;
+        for (; i < insert_pos_index; ++i) {
+            keys.byte_array[i] = source_node->keys.byte_array[i];
+            children[i] = source_node->children[i];
+        }
+
+        keys.byte_array[i] = static_cast<std::uint8_t>(key_byte);
+        children[i] = child.release();
+        ++i;
+
+        for (; i <= inode4_type::capacity; ++i) {
+            keys.byte_array[i] = source_node->keys.byte_array[i - 1];
+            children[i] = source_node->children[i - 1];
+        }
+    }
+
+    constexpr basic_inode_16(std::unique_ptr<inode48_type> source_node,
+                             std::uint8_t child_to_delete, Db& db_instance) noexcept
+        : parent_type{*source_node}
+    {
+        source_node->remove_child_pointer(child_to_delete, db_instance);
+        source_node->child_indexes[child_to_delete] = inode48_type::empty_child;
+
+        // TODO(laurynas): consider AVX512 gather?
+        unsigned next_child = 0;
+        unsigned i = 0;
+        while (true) {
+            const auto source_child_i = source_node->child_indexes[i];
+            if (source_child_i != inode48_type::empty_child) {
+                keys.byte_array[next_child] = static_cast<std::uint8_t>(i);
+                const auto source_child_ptr = source_node->children.pointer_array[source_child_i];
+                assert(source_child_ptr != nullptr);
+                this->children[next_child] = source_child_ptr;
+                ++next_child;
+                if (next_child == basic_inode_16::capacity)
+                    break;
+            }
+            assert(i < 255);
+            ++i;
+        }
+
+        assert(basic_inode_16::capacity == this->f.f.children_count);
+        assert(std::is_sorted(keys.byte_array.cbegin(),
+                              keys.byte_array.cbegin() + basic_inode_16::capacity));
+    }
+
+    constexpr void add(db_leaf_unique_ptr child, tree_depth depth) noexcept
+    {
+        assert(this->type() == basic_inode_16::static_node_type);
+
+        const auto key_byte = leaf_type::key(child.get())[depth];
+        auto children_count = this->f.f.children_count;
+
+        assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+
+        const auto insert_pos_index = get_sorted_key_array_insert_position(key_byte);
+        if (insert_pos_index != children_count) {
+            assert(keys.byte_array[insert_pos_index] != key_byte);
+            std::copy_backward(keys.byte_array.cbegin() + insert_pos_index,
+                               keys.byte_array.cbegin() + children_count,
+                               keys.byte_array.begin() + children_count + 1);
+            std::copy_backward(children.begin() + insert_pos_index,
+                               children.begin() + children_count,
+                               children.begin() + children_count + 1);
+        }
+        keys.byte_array[insert_pos_index] = key_byte;
+        children[insert_pos_index] = node_ptr{child.release()};
+        ++children_count;
+        this->f.f.children_count = children_count;
+
+        assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+    }
+
+    constexpr void remove(std::uint8_t child_index, Db& db_instance) noexcept
+    {
+        assert(this->type() == basic_inode_16::static_node_type);
+        auto children_count = this->f.f.children_count;
+        assert(child_index < children_count);
+        assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+
+        reclaim_node_ptr_at_scope_exit_type reclamator{children[child_index], db_instance};
+
+        for (unsigned i = child_index + 1; i < children_count; ++i) {
+            keys.byte_array[i - 1] = keys.byte_array[i];
+            children[i - 1] = children[i];
+        }
+
+        --children_count;
+        this->f.f.children_count = children_count;
+
+        assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+    }
+
+    [[nodiscard, gnu::pure]] constexpr find_result find_child(std::uint8_t key_byte) noexcept
+    {
+#if defined(__SSE2__)
+        const auto replicated_search_key = _mm_set1_epi8(static_cast<char>(key_byte));
+        const auto matching_key_positions = _mm_cmpeq_epi8(replicated_search_key, this->keys.sse);
+        const auto mask = (1U << this->f.f.children_count) - 1;
+        const auto bit_field =
+            static_cast<unsigned>(_mm_movemask_epi8(matching_key_positions)) & mask;
+        if (bit_field != 0) {
+            const auto i = static_cast<unsigned>(__builtin_ctz(bit_field));
+            return std::make_pair(i, &this->children[i]);
+        }
+        return std::make_pair(0xFF, nullptr);
+#else
+#error Needs porting
+#endif
+    }
+
+    constexpr void delete_subtree(Db& db_instance) noexcept
+    {
+        const auto children_count = this->f.f.children_count;
+        for (std::uint8_t i = 0; i < children_count; ++i)
+            db_instance.delete_subtree(this->children[i]);
+    }
+
+    [[gnu::cold, gnu::noinline]] void dump(std::ostream& os) const
+    {
+        const auto children_count = this->f.f.children_count;
+        os << ", key bytes =";
+        for (std::uint8_t i = 0; i < children_count; ++i)
+            dump_byte(os, this->keys.byte_array[i]);
+        os << ", children:\n";
+        for (std::uint8_t i = 0; i < children_count; ++i)
+            dump_node(os, this->children[i]);
+    }
+
+private:
+    [[nodiscard, gnu::pure]] constexpr auto get_sorted_key_array_insert_position(
+        std::uint8_t key_byte) noexcept
+    {
+        const auto children_count = this->f.f.children_count;
+
+        assert(children_count < basic_inode_16::capacity);
+        assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+        assert(std::adjacent_find(keys.byte_array.cbegin(),
+                                  keys.byte_array.cbegin() + children_count) >=
+               keys.byte_array.cbegin() + children_count);
+
+#if defined(__SSE2__)
+        const auto replicated_insert_key = _mm_set1_epi8(static_cast<char>(key_byte));
+        const auto lesser_key_positions = _mm_cmple_epu8(replicated_insert_key, keys.sse);
+        const auto mask = (1U << children_count) - 1;
+        const auto bit_field =
+            static_cast<unsigned>(_mm_movemask_epi8(lesser_key_positions)) & mask;
+        const auto result =
+            static_cast<std::uint8_t>((bit_field != 0) ? __builtin_ctz(bit_field) : children_count);
+#else
+        const auto result = static_cast<std::uint8_t>(
+            std::lower_bound(keys.byte_array.cbegin(),
+                             keys.byte_array.cbegin() + children_count_ccopy, key_byte) -
+            keys.byte_array.cbegin());
+#endif
+
+        assert(result == children_count || keys.byte_array[result] != key_byte);
+        return result;
+    }
+
+protected:
+    union {
+        std::array<std::uint8_t, basic_inode_16::capacity> byte_array;
+        __m128i sse;
+    } keys;
+    std::array<node_ptr, basic_inode_16::capacity> children;
+
+private:
+    static constexpr std::uint8_t empty_child = 0xFF;
+
+    template <class> friend class basic_inode_4;
+    template <class> friend class basic_inode_48;
+};
+
+template <typename Db>
+using basic_inode_48_parent = basic_inode<Db, 17, 48, node_type::I48, basic_inode_16<Db>,
+                                          basic_inode_256<Db>, basic_inode_48<Db>>;
+
+template <typename Db> class basic_inode_48 : public basic_inode_48_parent<Db>
+{
+    using parent_type = basic_inode_48_parent<Db>;
+    using inode16_type = typename parent_type::inode16_type;
+    using inode48_type = typename parent_type::inode48_type;
+    using inode256_type = typename parent_type::inode256_type;
+    using node_ptr = typename parent_type::node_ptr;
+    using reclaim_node_ptr_at_scope_exit_type =
+        typename parent_type::reclaim_node_ptr_at_scope_exit_type;
+
+public:
+    using db_leaf_unique_ptr = typename parent_type::db_leaf_unique_ptr;
+
+    constexpr basic_inode_48(std::unique_ptr<inode16_type> source_node, db_leaf_unique_ptr child,
+                             tree_depth depth) noexcept
+        : parent_type{*source_node}
+    {
+        auto* const __restrict__ source_node_ptr = source_node.get();
+        auto* const __restrict__ child_ptr = child.release();
+
+        // TODO(laurynas): initialize at declaration
+        // Cannot use memset without C++20 atomic_ref, but even then check whether
+        // this compiles to memset already
+        std::fill(this->child_indexes.begin(), this->child_indexes.end(), empty_child);
+
+        // TODO(laurynas): consider AVX512 scatter?
+        std::uint8_t i = 0;
+        for (; i < inode16_type::capacity; ++i) {
+            const auto existing_key_byte = source_node_ptr->keys.byte_array[i];
+            this->child_indexes[static_cast<std::uint8_t>(existing_key_byte)] = i;
+        }
+        for (i = 0; i < inode16_type::capacity; ++i) {
+            this->children.pointer_array[i] = source_node_ptr->children[i];
+        }
+
+        const auto key_byte =
+            static_cast<std::uint8_t>(basic_inode_48::leaf_type::key(child_ptr)[depth]);
+        assert(this->child_indexes[key_byte] == empty_child);
+        this->child_indexes[key_byte] = i;
+        this->children.pointer_array[i] = child_ptr;
+        for (i = this->f.f.children_count; i < basic_inode_48::capacity; i++) {
+            this->children.pointer_array[i] = node_ptr{nullptr};
+        }
+    }
+
+    constexpr basic_inode_48(std::unique_ptr<inode256_type> source_node,
+                             std::uint8_t child_to_delete,
+                             // cppcheck-suppress constParameter
+                             Db& db_instance) noexcept
+        : parent_type{*source_node}
+    {
+        auto* const __restrict__ source_node_ptr = source_node.get();
+        reclaim_node_ptr_at_scope_exit_type reclaim_on_scope_exit{
+            source_node_ptr->children[child_to_delete], db_instance};
+        source_node_ptr->children[child_to_delete] = node_ptr{nullptr};
+
+        // std::memset(&child_indexes[0], empty_child, 256);
+
+        std::uint8_t next_child = 0;
+        for (unsigned child_i = 0; child_i < 256; child_i++) {
+            const auto child_ptr = source_node_ptr->children[child_i];
+            if (child_ptr == nullptr)
+                continue;
+
+            this->child_indexes[child_i] = next_child;
+            this->children.pointer_array[next_child] = source_node_ptr->children[child_i];
+            ++next_child;
+
+            if (next_child == this->f.f.children_count)
+                break;
+        }
+    }
+
+    constexpr void add(db_leaf_unique_ptr child, tree_depth depth) noexcept
+    {
+        assert(this->type() == basic_inode_48::static_node_type);
+
+        const auto key_byte =
+            static_cast<uint8_t>(basic_inode_48::leaf_type::key(child.get())[depth]);
+        assert(child_indexes[key_byte] == empty_child);
+        unsigned i{0};
+#if defined(__SSE2__)
+        const auto nullptr_vector = _mm_setzero_si128();
+        while (true) {
+            const auto ptr_vec0 = _mm_load_si128(&children.pointer_vector[i]);
+            const auto ptr_vec1 = _mm_load_si128(&children.pointer_vector[i + 1]);
+            const auto ptr_vec2 = _mm_load_si128(&children.pointer_vector[i + 2]);
+            const auto ptr_vec3 = _mm_load_si128(&children.pointer_vector[i + 3]);
+            const auto vec0_cmp = _mm_cmpeq_epi64(ptr_vec0, nullptr_vector);
+            const auto vec1_cmp = _mm_cmpeq_epi64(ptr_vec1, nullptr_vector);
+            const auto vec2_cmp = _mm_cmpeq_epi64(ptr_vec2, nullptr_vector);
+            const auto vec3_cmp = _mm_cmpeq_epi64(ptr_vec3, nullptr_vector);
+            // OK to treat 64-bit comparison result as 32-bit vector: we need to find
+            // the first 0xFF only.
+            const auto vec01_cmp = _mm_packs_epi32(vec0_cmp, vec1_cmp);
+            const auto vec23_cmp = _mm_packs_epi32(vec2_cmp, vec3_cmp);
+            const auto vec_cmp = _mm_packs_epi32(vec01_cmp, vec23_cmp);
+            const auto cmp_mask = static_cast<std::uint64_t>(_mm_movemask_epi8(vec_cmp));
+            if (cmp_mask != 0) {
+                i = (i << 1U) + (ffs_nonzero(cmp_mask) >> 1U);
+                break;
+            }
+            i += 4;
+        }
+#else  // #if defined(__SSE2__)
+        node_ptr child_ptr;
+        while (true) {
+            child_ptr = children.pointer_array[i];
+            if (child_ptr == nullptr)
+                break;
+            assert(i < 255);
+            ++i;
+        }
+#endif // #if defined(__SSE2__)
+        assert(children.pointer_array[i] == nullptr);
+        child_indexes[key_byte] = static_cast<std::uint8_t>(i);
+        children.pointer_array[i] = child.release();
+        ++this->f.f.children_count;
+    }
+
+    constexpr void remove(std::uint8_t child_index, Db& db_instance) noexcept
+    {
+        assert(this->type() == basic_inode_48::static_node_type);
+
+        remove_child_pointer(child_index, db_instance);
+        children.pointer_array[child_indexes[child_index]] = node_ptr{nullptr};
+        child_indexes[child_index] = empty_child;
+        --this->f.f.children_count;
+    }
+
+    [[nodiscard]] constexpr typename basic_inode_48::find_result find_child(
+        std::uint8_t key_byte) noexcept
+    {
+        if (this->child_indexes[static_cast<std::uint8_t>(key_byte)] != empty_child) {
+            const auto child_i = this->child_indexes[static_cast<std::uint8_t>(key_byte)];
+            return std::make_pair(static_cast<std::uint8_t>(key_byte),
+                                  &this->children.pointer_array[child_i]);
+        }
+        return std::make_pair(0xFF, nullptr);
+    }
+
+    constexpr void delete_subtree(Db& db_instance) noexcept
+    {
+        const auto children_count = this->f.f.children_count;
+
+        unsigned actual_children_count = 0;
+        for (unsigned i = 0; i < this->capacity; ++i) {
+            const auto child = this->children.pointer_array[i];
+            if (child != nullptr) {
+                ++actual_children_count;
+                db_instance.delete_subtree(child);
+                assert(actual_children_count <= children_count);
+            }
+        }
+        assert(actual_children_count == children_count);
+    }
+
+    [[gnu::cold, gnu::noinline]] void dump(std::ostream& os) const
+    {
+        const auto children_count = this->f.f.children_count;
+
+        os << ", key bytes & child indexes\n";
+        unsigned actual_children_count = 0;
+        for (unsigned i = 0; i < 256; i++)
+            if (this->child_indexes[i] != empty_child) {
+                ++actual_children_count;
+                os << " ";
+                dump_byte(os, static_cast<std::uint8_t>(i));
+                os << ", child index = " << static_cast<unsigned>(this->child_indexes[i]) << ": ";
+                assert(this->children.pointer_array[this->child_indexes[i]] != nullptr);
+                dump_node(os, this->children.pointer_array[this->child_indexes[i]]);
+                assert(actual_children_count <= children_count);
+            }
+
+        assert(actual_children_count == children_count);
+    }
+
+private:
+    constexpr void remove_child_pointer(std::uint8_t child_index, Db& db_instance) noexcept
+    {
+        direct_remove_child_pointer(child_indexes[child_index], db_instance);
+    }
+
+    constexpr void direct_remove_child_pointer(std::uint8_t children_i,
+                                               // cppcheck-suppress constParameter
+                                               Db& db_instance) noexcept
+    {
+        const auto child_ptr = children.pointer_array[children_i];
+
+        assert(children_i != empty_child);
+        assert(child_ptr != nullptr);
+
+        reclaim_node_ptr_at_scope_exit_type reclaim{child_ptr, db_instance};
+    }
+
+    std::array<std::uint8_t, 256> child_indexes;
+    union children_union {
+        std::array<node_ptr, basic_inode_48::capacity> pointer_array;
+#if defined(__SSE2__)
+        static_assert(basic_inode_48::capacity % 2 == 0);
+        // To support unrolling without remainder
+        static_assert((basic_inode_48::capacity / 2) % 4 == 0);
+        // No std::array below because it would ignore the alignment attribute
+        // NOLINTNEXTLINE(modernize-avoid-c-arrays)
+        __m128i pointer_vector[basic_inode_48::capacity / 2]; // NOLINT(runtime/arrays)
+#endif
+        children_union() {}
+    } children;
+
+    static constexpr std::uint8_t empty_child = 0xFF;
+
+    template <class> friend class basic_inode_16;
+    template <class> friend class basic_inode_256;
+};
+
+template <typename Db>
+using basic_inode_256_parent =
+    basic_inode<Db, 49, 256, node_type::I256, basic_inode_48<Db>, fake_inode, basic_inode_256<Db>>;
+
+template <typename Db> class basic_inode_256 : public basic_inode_256_parent<Db>
+{
+private:
+    using parent_type = basic_inode_256_parent<Db>;
+    using inode48_type = typename parent_type::inode48_type;
+    using inode256_type = typename parent_type::inode256_type;
+    using node_ptr = typename parent_type::node_ptr;
+    using reclaim_node_ptr_at_scope_exit_type =
+        typename parent_type::reclaim_node_ptr_at_scope_exit_type;
+
+public:
+    using db_leaf_unique_ptr = typename parent_type::db_leaf_unique_ptr;
+
+    constexpr basic_inode_256(std::unique_ptr<inode48_type> source_node, db_leaf_unique_ptr child,
+                              tree_depth depth) noexcept
+        : parent_type{*source_node}
+    {
+        unsigned children_copied = 0;
+        unsigned i = 0;
+        while (true) {
+            const auto children_i = source_node->child_indexes[i];
+            if (children_i == inode48_type::empty_child) {
+                children[i] = nullptr;
+            } else {
+                children[i] = source_node->children.pointer_array[children_i];
+                ++children_copied;
+                if (children_copied == inode48_type::capacity)
+                    break;
+            }
+            ++i;
+        }
+
+        ++i;
+        for (; i < basic_inode_256::capacity; ++i)
+            children[i] = nullptr;
+
+        const auto key_byte =
+            static_cast<uint8_t>(basic_inode_256::leaf_type::key(child.get())[depth]);
+        assert(children[key_byte] == nullptr);
+        children[key_byte] = node_ptr{child.release()};
+    }
+
+    constexpr void add(db_leaf_unique_ptr child, tree_depth depth) noexcept
+    {
+        assert(this->type() == basic_inode_256::static_node_type);
+        assert(!this->is_full());
+
+        const auto key_byte =
+            static_cast<std::uint8_t>(basic_inode_256::leaf_type::key(child.get())[depth]);
+        assert(children[key_byte] == nullptr);
+        children[key_byte] = node_ptr{child.release()};
+        ++this->f.f.children_count;
+    }
+
+    constexpr void remove(std::uint8_t child_index, Db& db_instance) noexcept
+    {
+        const auto child_ptr = children[child_index];
+
+        assert(this->type() == basic_inode_256::static_node_type);
+        assert(child_ptr != nullptr);
+
+        reclaim_node_ptr_at_scope_exit_type reclaim{child_ptr, db_instance};
+
+        children[child_index] = node_ptr{nullptr};
+        --this->f.f.children_count;
+    }
+
+    [[nodiscard]] constexpr typename basic_inode_256::find_result find_child(
+        std::uint8_t key_byte) noexcept
+    {
+        const auto key_int_byte = static_cast<std::uint8_t>(key_byte);
+        if (children[key_int_byte] != nullptr)
+            return std::make_pair(key_int_byte, &children[key_int_byte]);
+        return std::make_pair(0xFF, nullptr);
+    }
+
+    template <typename Function>
+    constexpr void for_each_child(Function func) noexcept(noexcept(func(0, node_ptr{nullptr})))
+    {
+        const auto children_count = this->f.f.children_count;
+        std::uint8_t actual_children_count = 0;
+        for (unsigned i = 0; i < 256; ++i) {
+            const auto child_ptr = children[i];
+            if (child_ptr != nullptr) {
+                ++actual_children_count;
+                func(i, child_ptr);
+                assert(actual_children_count <= children_count || children_count == 0);
+            }
+        }
+        assert(actual_children_count == children_count);
+    }
+
+    template <typename Function>
+    constexpr void for_each_child(Function func) const
+        noexcept(noexcept(func(0, node_ptr{nullptr})))
+    {
+        const_cast<basic_inode_256*>(this)->for_each_child(func);
+    }
+
+    constexpr void delete_subtree(Db& db_instance) noexcept
+    {
+        for_each_child([&db_instance](unsigned, node_ptr child) noexcept {
+            db_instance.delete_subtree(child);
+        });
+    }
+
+    [[gnu::cold, gnu::noinline]] void dump(std::ostream& os) const
+    {
+        os << ", key bytes & children:\n";
+        for_each_child([&](unsigned i, node_ptr child) noexcept {
+            os << ' ';
+            dump_byte(os, static_cast<std::uint8_t>(i));
+            os << ' ';
+            dump_node(os, child);
+        });
+    }
+
+private:
+    std::array<node_ptr, basic_inode_256::capacity> children;
+
+    friend inode48_type;
+};
+
+} // namespace detail
+} // namespace art
+
+#endif // ART_DETAIL_ART_NODES_HEADER_INCLUDED
