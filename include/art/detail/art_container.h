@@ -1,10 +1,8 @@
 #ifndef ART_DETAIL_ART_CONTAINER_HEADER_INCLUDED
 #define ART_DETAIL_ART_CONTAINER_HEADER_INCLUDED
 
-#include "basic_art_policy.h"
-#include "basic_header.h"
+#include "art_deleters.h"
 #include "basic_leaf.h"
-#include "basic_node_ptr.h"
 #include "tree_iterator.h"
 
 namespace art
@@ -20,40 +18,32 @@ template <typename Db> class basic_inode_256;
 
 template <typename Traits> class db
 {
-    // Compute the header and leaf types first
+public:
+    using header_type = typename Traits::header_type;
+
+private:
     using bitwise_key = typename Traits::bitwise_key;
     using multi_container = typename Traits::multi_container;
-
-    using header_type = basic_header<bitwise_key>;
+    using node_ptr = typename Traits::node_ptr;
+    using fast_key_type = typename Traits::fast_key_type;
 
     // Leaves are always single-valued, so leaf count is the same as
     // the actual size of the container.
     using leaf_type =
         basic_leaf<header_type, typename Traits::mapped_type, typename Traits::allocator_type>;
-    static_assert(std::is_standard_layout<leaf_type>::value,
-                  "basic_leaf must be standard layout type to support aliasing through header");
-
-    using self_t = db<Traits>;
-    using inode = basic_inode_impl<self_t>;
-    using inode_4 = basic_inode_4<self_t>;
-    using inode_16 = basic_inode_16<self_t>;
-    using inode_48 = basic_inode_48<self_t>;
-    using inode_256 = basic_inode_256<self_t>;
-
-    using node_ptr = basic_node_ptr<leaf_type, inode, inode_4, inode_16, inode_48, inode_256>;
-    using db_leaf_unique_ptr = basic_db_leaf_unique_ptr<leaf_type, self_t>;
-
-    using fast_key_type = typename Traits::fast_key_type;
 
     using leaf_allocator_type = typename Traits::allocator_type::template rebind<leaf_type>::other;
     using leaf_allocator_traits = std::allocator_traits<leaf_allocator_type>;
 
+    using self_t = db<Traits>;
+    using db_leaf_unique_ptr = basic_db_leaf_unique_ptr<leaf_type, self_t>;
+
     // We will be friends only with the nodes that have the same policy
-    friend inode;
-    friend inode_4;
-    friend inode_16;
-    friend inode_48;
-    friend inode_256;
+    friend basic_inode_impl<self_t>;
+    friend basic_inode_4<self_t>;
+    friend basic_inode_16<self_t>;
+    friend basic_inode_48<self_t>;
+    friend basic_inode_256<self_t>;
     friend basic_leaf_deleter<leaf_type, self_t>;
 
 public:
@@ -69,7 +59,7 @@ public:
     using key_compare = typename Traits::key_compare;
     using allocator_type = typename Traits::allocator_type;
     using iterator = tree_iterator<Traits, node_ptr>;
-    using const_iterator = tree_iterator<Traits, const node_ptr>;
+    using const_iterator = tree_iterator<const Traits, node_ptr>;
     using reverse_iterator = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
@@ -116,7 +106,7 @@ public:
     bool empty() const noexcept { return data.root == nullptr; }
 
     // Lookup routines
-    iterator find(fast_key_type key) noexcept { return iterator(internal_find(key)); }
+    iterator find(fast_key_type key) noexcept { return internal_find(key).mutable_self(); }
     const_iterator find(fast_key_type key) const noexcept { return internal_find(key); }
 
     iterator lower_bound(fast_key_type key) noexcept;
@@ -255,7 +245,11 @@ protected:
     }
 
 private:
-    [[nodiscard]] const_iterator internal_find(bitwise_key key) const noexcept;
+    [[nodiscard]] const_iterator internal_locate(bitwise_key& key) const noexcept;
+    [[nodiscard]] const_iterator internal_find(fast_key_type key) const noexcept;
+
+    template <typename... Args>
+    [[nodiscard]] iterator internal_emplace(const_iterator hint, bitwise_key key, Args&&... args);
 
     template <typename... Args>
     [[nodiscard]] iterator emplace_key_args(std::true_type, fast_key_type key, Args&&... args);

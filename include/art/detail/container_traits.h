@@ -1,6 +1,7 @@
 #ifndef ART_CONTAINER_TRAITS_HEADER_INCLUDED
 #define ART_CONTAINER_TRAITS_HEADER_INCLUDED
 
+#include "basic_header.h"
 #include "bitwise_key.h"
 
 namespace art
@@ -34,10 +35,12 @@ struct container_traits {
     using allocator_type = Alloc;
     using multi_container = MultiMap;
 
-    // We are computing the bitwise key early, so that in the case of failure,
-    // when the compiler says that florbicators must vesterimuzite, the spewed
-    // error messages would be at least potentially parsable.
-    using bitwise_key = typename detail::bitwise_key_t<Key, Compare>;
+    // We are computing the bitwise key and friends early, so that in the
+    // case of failure, when the compiler says that florbicators must vesterimuzite,
+    // the spewed error messages would be at least potentially parsable.
+    using bitwise_key = bitwise_key_t<Key, Compare>;
+    using header_type = basic_header<bitwise_key>;
+    using node_ptr = art_node_base<header_type>*;
 };
 
 } // namespace detail

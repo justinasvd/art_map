@@ -1,7 +1,7 @@
-#ifndef ART_DETAIL_BASIC_ART_POLICY_HEADER_INCLUDED
-#define ART_DETAIL_BASIC_ART_POLICY_HEADER_INCLUDED
+#ifndef ART_DETAIL_ART_DELETERS_HEADER_INCLUDED
+#define ART_DETAIL_ART_DELETERS_HEADER_INCLUDED
 
-#include "node_type.h"
+#include "art_node_base.h"
 
 #include <memory>
 
@@ -106,4 +106,4 @@ private:
 } // namespace detail
 } // namespace art
 
-#endif // ART_DETAIL_BASIC_ART_POLICY_HEADER_INCLUDED
+#endif // ART_DETAIL_ART_DELETERS_HEADER_INCLUDED

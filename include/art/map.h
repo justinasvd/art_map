@@ -14,8 +14,6 @@ template <typename Key, typename Data, typename Compare, typename Alloc, typenam
 struct map_traits
     : public container_traits<Key, std::pair<const Key, Data>, Compare, Alloc, MultiMap> {
     using mapped_type = Data;
-    using mutable_value_type = std::pair<Key, Data>;
-
     using fast_key_type = fast_const_argument_t<Key>;
 
     // We don't really care what kind of Pair we get here. The biggest requirement is not to
