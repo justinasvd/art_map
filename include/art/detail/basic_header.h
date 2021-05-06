@@ -2,9 +2,7 @@
 #define ART_DETAIL_BASIC_HEADER_HEADER_INCLUDED
 
 #include "art_node_base.h"
-#include "dump_byte.h"
 
-#include <ostream>
 #include <type_traits>
 
 namespace art
@@ -17,72 +15,59 @@ template <typename BitwiseKey> struct basic_header final {
     using bitwise_key = BitwiseKey;
     using key_size_type = typename BitwiseKey::size_type;
 
-    constexpr basic_header(node_type type, bitwise_key key) noexcept
+    constexpr basic_header(node_type type, bitwise_key key, key_size_type key_size) noexcept
         : type_(type)
+        , size_(key_size)
         , key_(key)
     {
     }
 
     [[nodiscard]] constexpr node_type type() const noexcept { return type_; }
 
-    [[nodiscard]] bool match(bitwise_key other) const noexcept { return key_.match(other); }
+    [[nodiscard]] constexpr bool match(bitwise_key other) const noexcept
+    {
+        return key_.match(other);
+    }
+
+    [[nodiscard]] std::uint8_t operator[](key_size_type index) const noexcept
+    {
+        return key_[index];
+    }
 
     [[nodiscard]] constexpr key_size_type prefix_length() const noexcept
     {
-        // const unsigned result = key_.prefix_length();
-        // assert(result <= key_prefix_capacity);
-        // return result;
-        return 0;
+        assert(size_ <= key_.max_size());
+        return size_;
     }
     [[nodiscard]] constexpr key_size_type shared_prefix_length(bitwise_key key) const noexcept
     {
-        /*const auto prefix_u64 = header_as_uint64() >> 8U;
-    return shared_len(static_cast<std::uint64_t>(shifted_key.to_key()), prefix_u64,
-                      header.key_prefix_length());*/
+        return bitwise_key::shared_len(key, key_, size_);
     }
-
-    void dump(std::ostream& os) const
+    [[nodiscard]] constexpr std::pair<bitwise_key, key_size_type> shared_prefix(
+        bitwise_key key, key_size_type size) const noexcept
     {
-        switch (type_) {
-        case node_type::LEAF:
-            os << "LEAF: ";
-            dump_key_prefix(os, key_.max_size());
-            break;
-        case node_type::I4:
-            os << "I4: ";
-            dump_key_prefix(os);
-            break;
-        case node_type::I16:
-            os << "I16: ";
-            dump_key_prefix(os);
-            break;
-        case node_type::I48:
-            os << "I48: ";
-            dump_key_prefix(os);
-            break;
-        case node_type::I256:
-            os << "I256: ";
-            dump_key_prefix(os);
-            break;
-        }
+        assert(size <= size_);
+        const key_size_type shared_size = bitwise_key::shared_len(key, key_, size);
+        return std::make_pair(bitwise_key::partial_key(key_, shared_size), shared_size);
     }
 
-private:
-    // Dump bitwise key (or its prefix)
-    void dump_key_prefix(std::ostream& os, key_size_type len)
+    constexpr void shift_right(key_size_type size) noexcept
     {
-        os << ", key prefix len = " << len;
-        if (len > 0) {
-            os << ", key prefix =";
-            for (key_size_type i = 0; i != len; ++i)
-                dump_byte(os, key_[i]);
-        }
+        assert(size <= size_);
+        key_.shift_right(size);
+        size_ -= size;
     }
 
-    void dump_key_prefix(std::ostream& os) const { dump_key_prefix(os, prefix_length()); }
+    [[nodiscard]] constexpr std::uint8_t pop_front() noexcept
+    {
+        const std::uint8_t front = key_.front();
+        shift_right(1);
+        return front;
+    }
 
 private:
     node_type type_;
+    key_size_type size_;
     bitwise_key key_;
 };
 

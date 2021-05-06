@@ -94,7 +94,7 @@ private:
 
     [[nodiscard]] bool match(bitwise_key key) const noexcept
     {
-        return node && node->type() == node_type::LEAF && node->match(key);
+        return node && (node->type() == node_type::LEAF) && node->match(key);
     }
     [[nodiscard]] key_size_type prefix_length() const noexcept { return node->prefix_length(); }
     [[nodiscard]] key_size_type shared_prefix_length(bitwise_key key) const noexcept

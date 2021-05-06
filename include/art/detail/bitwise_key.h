@@ -1,12 +1,15 @@
 #ifndef ART_DETAIL_BITWISE_KEY_HEADER_INCLUDED
 #define ART_DETAIL_BITWISE_KEY_HEADER_INCLUDED
 
+#include "ffs_nonzero.h"
+
 #include <boost/endian/conversion.hpp>
 #include <boost/integer.hpp>
 
 #include <cassert>
-#include <cstdint>
+#include <climits>
 #include <functional>
+#include <type_traits>
 
 namespace art
 {
@@ -61,7 +64,7 @@ template <typename Ptr, typename Order> struct ptr_bitwise_compare {
     static_assert(std::is_pointer<Ptr>::value, "Unsupported pointer type");
 
     using compare_t = bitwise_compare<Order>;
-    inline static constexpr std::uintptr_t byte_swap(Ptr k) noexcept
+    [[nodiscard]] inline static constexpr std::uintptr_t byte_swap(Ptr k) noexcept
     {
         return compare_t::byte_swap(reinterpret_cast<std::uintptr_t>(k));
     }
@@ -72,7 +75,7 @@ template <typename Int, typename UInt, typename Order> struct int_bitwise_compar
                   "Unsupported signed integer type");
 
     using compare_t = bitwise_compare<Order>;
-    inline static constexpr UInt byte_swap(Int k) noexcept
+    [[nodiscard]] inline static constexpr UInt byte_swap(Int k) noexcept
     {
         return compare_t::byte_swap(static_cast<UInt>(-k));
     }
@@ -86,6 +89,8 @@ template <typename T, typename Key, typename Policy> struct unsigned_integral_bi
     using size_type = unsigned int;
     static constexpr size_type num_bytes = sizeof(Key);
 
+    static constexpr size_type max_size() noexcept { return num_bytes; }
+
     explicit constexpr unsigned_integral_bitwise_key(T k) noexcept
         : key{Policy::byte_swap(k)}
     {
@@ -97,24 +102,46 @@ template <typename T, typename Key, typename Policy> struct unsigned_integral_bi
     }
 
     // Internal nodes use partial keys
-    [[nodiscard]] size_type size() const noexcept { return key.bytes[num_bytes - 1]; }
     [[nodiscard]] std::uint8_t operator[](size_type index) const noexcept
     {
-        assert(index + 1 < num_bytes);
+        assert(index < num_bytes);
         return key.bytes[index];
     }
 
     [[nodiscard]] std::uint8_t front() const noexcept { return key.bytes[0]; }
 
-    void shift_right(size_type nbytes) noexcept
+    void shift_right(size_type nbytes) noexcept { key.bitkey >>= (nbytes * CHAR_BIT); }
+
+    [[nodiscard]] static size_type shared_len(unsigned_integral_bitwise_key k1,
+                                              unsigned_integral_bitwise_key k2,
+                                              size_type clamp_byte_pos) noexcept
     {
-        const std::uint8_t siz = size();
-        assert(nbytes <= siz);
-        key.bitkey >>= (nbytes * CHAR_BIT);
-        key.bytes[num_bytes - 1] = siz - nbytes;
+        assert(clamp_byte_pos < num_bytes);
+
+        const Key diff = k1.key.bitkey ^ k2.key.bitkey;
+        const Key clamped = diff | himask(clamp_byte_pos);
+        return (ffs_nonzero(clamped) - 1) >> 3U;
+    }
+
+    [[nodiscard]] static unsigned_integral_bitwise_key partial_key(unsigned_integral_bitwise_key k,
+                                                                   size_type cut_len) noexcept
+    {
+        return unsigned_integral_bitwise_key(k.key.bitkey & (himask(cut_len) - 1),
+                                             std::false_type());
     }
 
 private:
+    // Non-byte-swapping constructor
+    constexpr unsigned_integral_bitwise_key(T k, std::false_type) noexcept
+        : key{k}
+    {
+    }
+
+    static constexpr Key himask(size_type len) noexcept
+    {
+        return static_cast<Key>(1) << (len * CHAR_BIT);
+    }
+
     union {
         Key bitkey;
         std::array<std::uint8_t, num_bytes> bytes;

@@ -40,7 +40,7 @@ struct container_traits {
     // the spewed error messages would be at least potentially parsable.
     using bitwise_key = bitwise_key_t<Key, Compare>;
     using header_type = basic_header<bitwise_key>;
-    using node_ptr = art_node_base<header_type>*;
+    using node_base = art_node_base<header_type>;
 };
 
 } // namespace detail

@@ -11,7 +11,7 @@ namespace detail
 inline void dump_byte(std::ostream& os, std::uint8_t byte)
 {
     char hex[4];
-    std::snprintf(hex, 4, " %2x", static_cast<unsigned>(byte));
+    std::snprintf(hex, 4, " %.2x", static_cast<unsigned>(byte));
     os.write(hex, 3);
 }
 

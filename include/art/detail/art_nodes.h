@@ -3,11 +3,10 @@
 
 #include "art_node_base.h"
 #include "dump_byte.h"
+#include "ffs_nonzero.h"
 #include "tree_depth.h"
 
 #if !defined(NDEBUG)
-#include <cstdlib>
-#include <iomanip>
 #include <iostream>
 #endif
 
@@ -22,21 +21,6 @@ namespace art
 {
 namespace detail
 {
-
-// On x86_64 with GCC up to and including version 10, __builtin_ffs compiles to
-// BSF/CMOVE pair if TZCNT is not available. CMOVE is only required if arg is
-// zero, which we know not to be. Only GCC 11 gets the hint by "if (arg == 0)
-// __builtin_unreachable()"
-[[gnu::const]] inline unsigned ffs_nonzero(std::uint64_t arg) noexcept
-{
-    std::int64_t result;
-#ifdef __x86_64
-    __asm__("bsfq %1, %0" : "=r"(result) : "rm"(arg) : "cc");
-    return static_cast<unsigned>(result + 1);
-#else
-    return static_cast<unsigned>(__builtin_ffsl(static_cast<std::int64_t>(arg)));
-#endif
-}
 
 // LCOV_EXCL_START
 [[noreturn]] inline void cannot_happen(const char* file, int line, const char* func)
@@ -67,12 +51,20 @@ public:
     using header_type = typename Db::header_type;
     using leaf_type = typename Db::leaf_type;
     using bitwise_key = typename Db::bitwise_key;
+    using key_size_type = typename bitwise_key::size_type;
     using node_ptr = base_t*;
 
-    using db_leaf_unique_ptr = basic_db_leaf_unique_ptr<leaf_type, Db>;
-    using reclaim_node_ptr_at_scope_exit_type = basic_reclaim_db_node_ptr_at_scope_exit<base_t, Db>;
+    using leaf_unique_ptr = unique_node_ptr<leaf_type, Db>;
+    using node_unique_ptr = unique_node_ptr<base_t, Db>;
 
 public:
+    constexpr basic_inode_impl(node_type type, unsigned min_size, bitwise_key key,
+                               key_size_type key_size, base_t* parent = nullptr) noexcept
+        : base_t(assert_non_leaf(type), key, key_size, parent)
+        , children_count(min_size)
+    {
+    }
+
     constexpr void cut_key_prefix(unsigned cut_len) noexcept
     {
         /*assert(cut_len > 0);
@@ -130,7 +122,7 @@ public:
         }
     }
 
-    constexpr void add(db_leaf_unique_ptr&& child, tree_depth depth) noexcept
+    constexpr void add(leaf_unique_ptr&& child, tree_depth depth) noexcept
     {
         assert(!is_full());
         assert(child.get() != nullptr);
@@ -254,40 +246,31 @@ public:
         // LCOV_EXCL_STOP
     }
 
-    constexpr basic_inode_impl(node_type type, unsigned children_count, bitwise_key k1,
-                               bitwise_key k2, tree_depth depth) noexcept
-        : base_t(assert_non_leaf(type))
-        , children_count(children_count)
+    static void dump(std::ostream& os, const node_ptr node)
     {
-        /*k1.shift_right(depth);
-
-        const auto k1_u64 = static_cast<std::uint64_t>(k1);
-
-        u32[0] = static_cast<std::uint32_t>(static_cast<std::uint32_t>(type) |
-                                            (k1_u64 & 0xFFFFFFFULL) << 8U);
-        u32[1] = static_cast<std::uint32_t>(k1_u64 >> 24U);
-
-        f.key_prefix_length = static_cast<key_prefix_size>(
-            shared_len(k1_u64, static_cast<std::uint64_t>(shifted_k2), key_prefix_capacity));*/
-    }
-
-    constexpr basic_inode_impl(node_type type, unsigned children_count, unsigned key_prefix_len,
-                               const inode_type& key_prefix_source_node) noexcept
-        : base_t(assert_non_leaf(type))
-        , children_count(children_count)
-    {
-        /*assert(key_prefix_len <= key_prefix_capacity);
-
-        u32[0] = (key_prefix_source_node.f.u32[0] & 0xFFFFFF00U) | static_cast<std::uint8_t>(type);
-        u32[1] = key_prefix_source_node.f.u32[1];
-        f.key_prefix_length = static_cast<key_prefix_size>(key_prefix_len);
-        f.children_count = static_cast<std::uint8_t>(children_count);*/
-    }
-
-    constexpr basic_inode_impl(node_type type, unsigned children_count,
-                               const basic_inode_impl& other) noexcept
-        : basic_inode_impl(type, children_count, other.key_prefix_length(), other)
-    {
+        os << "node at: " << node;
+        if (node == nullptr) {
+            os << '\n';
+            return;
+        }
+        os << ", parent = " << node->parent() << ", type = ";
+        node->dump(os);
+        switch (node->type()) {
+        case node_type::I4:
+            return static_cast<const inode4_type*>(node)->dump(os);
+        case node_type::I16:
+            return static_cast<const inode16_type*>(node)->dump(os);
+        case node_type::I48:
+            return static_cast<const inode48_type*>(node)->dump(os);
+        case node_type::I256:
+            return static_cast<const inode256_type*>(node)->dump(os);
+            // LCOV_EXCL_START
+        case node_type::LEAF:
+            os << ", value = " << static_cast<const leaf_type*>(node)->value() << '\n';
+            return;
+        }
+        CANNOT_HAPPEN();
+        // LCOV_EXCL_STOP
     }
 
 private:
@@ -316,9 +299,15 @@ class basic_inode : public basic_inode_impl<Db>
 public:
     using header_type = typename parent_type::header_type;
     using bitwise_key = typename parent_type::bitwise_key;
-    using db_leaf_unique_ptr = typename parent_type::db_leaf_unique_ptr;
-    using reclaim_node_ptr_at_scope_exit_type =
-        typename parent_type::reclaim_node_ptr_at_scope_exit_type;
+    using key_size_type = typename bitwise_key::size_type;
+    using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
+    using node_unique_ptr = typename parent_type::node_unique_ptr;
+
+    constexpr basic_inode(bitwise_key key, key_size_type key_size,
+                          art_node_base<header_type>* parent = nullptr) noexcept
+        : parent_type(NodeType, MinSize, key, key_size, parent)
+    {
+    }
 
     [[nodiscard]] static constexpr auto create(std::unique_ptr<LargerDerived>&& source_node,
                                                std::uint8_t child_to_delete, Db& db_instance)
@@ -327,7 +316,7 @@ public:
     }
 
     [[nodiscard]] static constexpr auto create(std::unique_ptr<SmallerDerived>&& source_node,
-                                               db_leaf_unique_ptr&& child, tree_depth depth)
+                                               leaf_unique_ptr&& child, tree_depth depth)
     {
         return std::make_unique<Derived>(std::move(source_node), std::move(child), depth);
     }
@@ -397,20 +386,22 @@ template <typename Db> class basic_inode_4 : public basic_inode_4_parent<Db>
 {
     using parent_type = basic_inode_4_parent<Db>;
     using bitwise_key = typename parent_type::bitwise_key;
+    using key_size_type = typename bitwise_key::size_type;
     using inode4_type = typename parent_type::inode4_type;
     using inode16_type = typename parent_type::inode16_type;
 
     using node_ptr = typename parent_type::node_ptr;
     using leaf_type = typename parent_type::leaf_type;
-    using db_leaf_unique_ptr = typename parent_type::db_leaf_unique_ptr;
-    using reclaim_node_ptr_at_scope_exit_type =
-        typename parent_type::reclaim_node_ptr_at_scope_exit_type;
+    using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
+    using node_unique_ptr = typename parent_type::node_unique_ptr;
 
 public:
+    using parent_type::basic_inode;
+
     // Create a new node with two given child nodes
-    [[nodiscard]] static constexpr auto create(bitwise_key k1, bitwise_key shifted_k2,
-                                               tree_depth depth, node_ptr child1,
-                                               db_leaf_unique_ptr&& child2)
+    [[nodiscard]] static node_unique_ptr create(bitwise_key k1, bitwise_key shifted_k2,
+                                                tree_depth depth, node_ptr child1,
+                                                leaf_unique_ptr&& child2)
     {
         return std::make_unique<inode4_type>(k1, shifted_k2, depth, child1, std::move(child2));
     }
@@ -421,33 +412,33 @@ public:
     // new node contain that existing node and a given new node which caused this
     // key prefix split.
     [[nodiscard]] static constexpr auto create(node_ptr source_node, unsigned len, tree_depth depth,
-                                               db_leaf_unique_ptr&& child1)
+                                               leaf_unique_ptr&& child1)
     {
         return std::make_unique<inode4_type>(source_node, len, depth, std::move(child1));
     }
 
     constexpr basic_inode_4(bitwise_key k1, bitwise_key shifted_k2, tree_depth depth,
-                            node_ptr child1, db_leaf_unique_ptr&& child2) noexcept
+                            node_ptr child1, leaf_unique_ptr&& child2) noexcept
         : parent_type{k1, shifted_k2, depth}
     {
-        /*const auto k2_next_byte_depth = this->key_prefix_length();
+        const auto k2_next_byte_depth = this->key_prefix_length();
         const auto k1_next_byte_depth = k2_next_byte_depth + depth;
         add_two_to_empty(k1[k1_next_byte_depth], child1, shifted_k2[k2_next_byte_depth],
-                         std::move(child2));*/
+                         std::move(child2));
     }
 
     constexpr basic_inode_4(node_ptr source_node, unsigned len, tree_depth depth,
-                            db_leaf_unique_ptr&& child1) noexcept
+                            leaf_unique_ptr&& child1) noexcept
         : parent_type{len, *source_node.internal}
     {
         assert(source_node.type() != node_type::LEAF);
-        /*assert(len < source_node.internal->key_prefix_length());
+        assert(len < source_node.internal->key_prefix_length());
         // assert(depth + len < art_key::size);
 
         const auto source_node_key_byte = source_node.internal->get_key_prefix()[len];
         source_node.internal->cut_key_prefix(len + 1);
         const auto new_key_byte = leaf_type::key(child1.get())[depth + len];
-        add_two_to_empty(source_node_key_byte, source_node, new_key_byte, std::move(child1));*/
+        add_two_to_empty(source_node_key_byte, source_node, new_key_byte, std::move(child1));
     }
 
     constexpr basic_inode_4(std::unique_ptr<inode16_type> source_node, std::uint8_t child_to_delete,
@@ -465,8 +456,7 @@ public:
             *children_itr++ = *source_children_itr++;
         }
 
-        reclaim_node_ptr_at_scope_exit_type reclaim_on_scope_exit{*source_children_itr,
-                                                                  db_instance};
+        node_unique_ptr reclaim_on_scope_exit{*source_children_itr, db_instance};
 
         ++source_keys_itr;
         ++source_children_itr;
@@ -480,7 +470,15 @@ public:
                               keys.byte_array.cbegin() + this->children_count));
     }
 
-    constexpr void add(db_leaf_unique_ptr child, tree_depth depth) noexcept
+    void add_two_to_empty(node_ptr child1, leaf_unique_ptr&& child2) noexcept
+    {
+        const key_size_type trim = this->prefix_length();
+        child1->shift_right(trim);
+        child2->shift_right(trim);
+        add_two_to_empty(child1->pop_front(), child1, child2->pop_front(), std::move(child2));
+    }
+
+    constexpr void add(leaf_unique_ptr child, tree_depth depth) noexcept
     {
         assert(this->type() == basic_inode_4::static_node_type);
 
@@ -522,8 +520,7 @@ public:
         assert(child_index < children_count);
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
 
-        reclaim_node_ptr_at_scope_exit_type reclaim_on_scope_exit{children[child_index],
-                                                                  db_instance};
+        node_unique_ptr reclaim_on_scope_exit{children[child_index], db_instance};
 
         for (typename decltype(keys.byte_array)::size_type i = child_index;
              i < static_cast<unsigned>(this->children_count - 1); ++i) {
@@ -547,7 +544,7 @@ public:
         const auto child_to_delete_ptr = children[child_to_delete];
         const std::uint8_t child_to_leave = (child_to_delete == 0) ? 1 : 0;
         const auto child_to_leave_ptr = children[child_to_leave];
-        reclaim_node_ptr_at_scope_exit_type reclaim_on_scope_exit{child_to_delete_ptr, db_instance};
+        node_unique_ptr reclaim_on_scope_exit{child_to_delete_ptr, db_instance};
         if (child_to_leave_ptr.type() != node_type::LEAF) {
             child_to_leave_ptr.internal->prepend_key_prefix(*this, keys.byte_array[child_to_leave]);
         }
@@ -607,15 +604,18 @@ public:
             dump_byte(os, this->keys.byte_array[i]);
         os << ", children:\n";
         for (std::uint8_t i = 0; i < children_count_copy; i++)
-            dump_node(os, children[i]);
+            parent_type::dump(os, children[i]);
     }
 
 protected:
     constexpr void add_two_to_empty(std::uint8_t key1, node_ptr child1, std::uint8_t key2,
-                                    db_leaf_unique_ptr child2) noexcept
+                                    leaf_unique_ptr&& child2) noexcept
     {
         assert(key1 != key2);
         assert(this->children_count == 2);
+
+        child1->reparent(this);
+        child2->reparent(this);
 
         const std::uint8_t key1_i = key1 < key2 ? 0 : 1;
         const std::uint8_t key2_i = key1_i == 0 ? 1 : 0;
@@ -654,13 +654,12 @@ private:
     using inode48_type = typename parent_type::inode48_type;
     using leaf_type = typename parent_type::leaf_type;
     using node_ptr = typename parent_type::node_ptr;
-    using reclaim_node_ptr_at_scope_exit_type =
-        typename parent_type::reclaim_node_ptr_at_scope_exit_type;
+    using node_unique_ptr = typename parent_type::node_unique_ptr;
 
 public:
-    using db_leaf_unique_ptr = typename parent_type::db_leaf_unique_ptr;
+    using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
 
-    constexpr basic_inode_16(std::unique_ptr<inode4_type> source_node, db_leaf_unique_ptr child,
+    constexpr basic_inode_16(std::unique_ptr<inode4_type> source_node, leaf_unique_ptr child,
                              tree_depth depth) noexcept
         : parent_type{*source_node}
     {
@@ -720,7 +719,7 @@ public:
                               keys.byte_array.cbegin() + basic_inode_16::capacity));
     }
 
-    constexpr void add(db_leaf_unique_ptr child, tree_depth depth) noexcept
+    constexpr void add(leaf_unique_ptr child, tree_depth depth) noexcept
     {
         assert(this->type() == basic_inode_16::static_node_type);
 
@@ -754,7 +753,7 @@ public:
         assert(child_index < children_count);
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
 
-        reclaim_node_ptr_at_scope_exit_type reclamator{children[child_index], db_instance};
+        node_unique_ptr reclamator{children[child_index], db_instance};
 
         for (unsigned i = child_index + 1; i < children_count; ++i) {
             keys.byte_array[i - 1] = keys.byte_array[i];
@@ -803,7 +802,7 @@ public:
             dump_byte(os, this->keys.byte_array[i]);
         os << ", children:\n";
         for (std::uint8_t i = 0; i < children_count; ++i)
-            dump_node(os, this->children[i]);
+            parent_type::dump(os, this->children[i]);
     }
 
 private:
@@ -862,13 +861,12 @@ template <typename Db> class basic_inode_48 : public basic_inode_48_parent<Db>
     using inode48_type = typename parent_type::inode48_type;
     using inode256_type = typename parent_type::inode256_type;
     using node_ptr = typename parent_type::node_ptr;
-    using reclaim_node_ptr_at_scope_exit_type =
-        typename parent_type::reclaim_node_ptr_at_scope_exit_type;
+    using node_unique_ptr = typename parent_type::node_unique_ptr;
 
 public:
-    using db_leaf_unique_ptr = typename parent_type::db_leaf_unique_ptr;
+    using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
 
-    constexpr basic_inode_48(std::unique_ptr<inode16_type> source_node, db_leaf_unique_ptr child,
+    constexpr basic_inode_48(std::unique_ptr<inode16_type> source_node, leaf_unique_ptr child,
                              tree_depth depth) noexcept
         : parent_type{*source_node}
     {
@@ -907,8 +905,8 @@ public:
         : parent_type{*source_node}
     {
         auto* const __restrict__ source_node_ptr = source_node.get();
-        reclaim_node_ptr_at_scope_exit_type reclaim_on_scope_exit{
-            source_node_ptr->children[child_to_delete], db_instance};
+        node_unique_ptr reclaim_on_scope_exit{source_node_ptr->children[child_to_delete],
+                                              db_instance};
         source_node_ptr->children[child_to_delete] = node_ptr{nullptr};
 
         // std::memset(&child_indexes[0], empty_child, 256);
@@ -928,7 +926,7 @@ public:
         }
     }
 
-    constexpr void add(db_leaf_unique_ptr child, tree_depth depth) noexcept
+    constexpr void add(leaf_unique_ptr child, tree_depth depth) noexcept
     {
         assert(this->type() == basic_inode_48::static_node_type);
 
@@ -1026,7 +1024,7 @@ public:
                 dump_byte(os, static_cast<std::uint8_t>(i));
                 os << ", child index = " << static_cast<unsigned>(this->child_indexes[i]) << ": ";
                 assert(this->children.pointer_array[this->child_indexes[i]] != nullptr);
-                dump_node(os, this->children.pointer_array[this->child_indexes[i]]);
+                parent_type::dump(os, this->children.pointer_array[this->child_indexes[i]]);
                 assert(actual_children_count <= children_count);
             }
 
@@ -1048,7 +1046,7 @@ private:
         assert(children_i != empty_child);
         assert(child_ptr != nullptr);
 
-        reclaim_node_ptr_at_scope_exit_type reclaim{child_ptr, db_instance};
+        node_unique_ptr reclaim{child_ptr, db_instance};
     }
 
     std::array<std::uint8_t, 256> child_indexes;
@@ -1082,13 +1080,12 @@ private:
     using inode48_type = typename parent_type::inode48_type;
     using inode256_type = typename parent_type::inode256_type;
     using node_ptr = typename parent_type::node_ptr;
-    using reclaim_node_ptr_at_scope_exit_type =
-        typename parent_type::reclaim_node_ptr_at_scope_exit_type;
+    using node_unique_ptr = typename parent_type::node_unique_ptr;
 
 public:
-    using db_leaf_unique_ptr = typename parent_type::db_leaf_unique_ptr;
+    using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
 
-    constexpr basic_inode_256(std::unique_ptr<inode48_type> source_node, db_leaf_unique_ptr child,
+    constexpr basic_inode_256(std::unique_ptr<inode48_type> source_node, leaf_unique_ptr child,
                               tree_depth depth) noexcept
         : parent_type{*source_node}
     {
@@ -1117,7 +1114,7 @@ public:
         children[key_byte] = node_ptr{child.release()};
     }
 
-    constexpr void add(db_leaf_unique_ptr child, tree_depth depth) noexcept
+    constexpr void add(leaf_unique_ptr child, tree_depth depth) noexcept
     {
         assert(this->type() == basic_inode_256::static_node_type);
         assert(!this->is_full());
@@ -1136,7 +1133,7 @@ public:
         assert(this->type() == basic_inode_256::static_node_type);
         assert(child_ptr != nullptr);
 
-        reclaim_node_ptr_at_scope_exit_type reclaim{child_ptr, db_instance};
+        node_unique_ptr reclaim{child_ptr, db_instance};
 
         children[child_index] = node_ptr{nullptr};
         --this->children_count;
@@ -1188,7 +1185,7 @@ public:
             os << ' ';
             dump_byte(os, static_cast<std::uint8_t>(i));
             os << ' ';
-            dump_node(os, child);
+            parent_type::dump(os, child);
         });
     }
 

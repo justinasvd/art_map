@@ -4,7 +4,6 @@
 #include "art_node_base.h"
 
 #include <memory>
-#include <ostream>
 #include <type_traits>
 
 namespace art
@@ -19,11 +18,12 @@ struct basic_leaf final : public art_node_base<Header> {
     using allocator_type = Alloc;
     using allocator_traits = std::allocator_traits<Alloc>;
     using bitwise_key = typename Header::bitwise_key;
+    using key_size_type = typename bitwise_key::size_type;
+    using parent_type = art_node_base<Header>;
 
-    using base_t = art_node_base<Header>;
-
-    explicit constexpr basic_leaf(bitwise_key key) noexcept
-        : base_t(node_type::LEAF, key)
+    constexpr basic_leaf(bitwise_key key, key_size_type key_size,
+                         parent_type* parent = nullptr) noexcept
+        : parent_type(node_type::LEAF, key, key_size, parent)
     {
     }
 
@@ -39,11 +39,8 @@ struct basic_leaf final : public art_node_base<Header> {
         allocator_traits::destroy(alloc, addr());
     }
 
-    void dump(std::ostream& os) const
-    {
-        base_t::dump(os);
-        os << ", value: " << *addr() << '\n';
-    }
+    T& value() noexcept { return *addr(); }
+    const T& value() const noexcept { return *addr(); }
 
 private:
     T* addr() noexcept { return reinterpret_cast<T*>(&data); }
@@ -57,14 +54,15 @@ private:
 template <typename Header, typename T, T V, typename Alloc>
 struct basic_leaf<Header, std::integral_constant<T, V>, Alloc> final
     : public art_node_base<Header> {
-    using value_type = T;
+    using value_type = std::integral_constant<T, V>;
     using allocator_type = Alloc;
     using bitwise_key = typename Header::bitwise_key;
+    using key_size_type = typename bitwise_key::size_type;
+    using parent_type = art_node_base<Header>;
 
-    using base_t = art_node_base<Header>;
-
-    explicit constexpr basic_leaf(bitwise_key key) noexcept
-        : base_t(node_type::LEAF, key)
+    constexpr basic_leaf(bitwise_key key, key_size_type key_size,
+                         parent_type* parent = nullptr) noexcept
+        : parent_type(node_type::LEAF, key, key_size, parent)
     {
     }
 
@@ -72,11 +70,8 @@ struct basic_leaf<Header, std::integral_constant<T, V>, Alloc> final
     template <typename... Args> static void emplace_value(allocator_type&, Args&&...) noexcept {}
     static void destroy_value(allocator_type&) noexcept {}
 
-    void dump(std::ostream& os) const
-    {
-        base_t::dump(os);
-        os << '\n';
-    }
+    // Simply return a value
+    static constexpr value_type value() noexcept { return value_type(); }
 };
 
 } // namespace detail

@@ -1,9 +1,11 @@
 #ifndef ART_DETAIL_ART_CONTAINER_HEADER_INCLUDED
 #define ART_DETAIL_ART_CONTAINER_HEADER_INCLUDED
 
-#include "art_deleters.h"
+#include "art_deleter.h"
 #include "basic_leaf.h"
 #include "tree_iterator.h"
+
+#include <cassert>
 
 namespace art
 {
@@ -24,7 +26,8 @@ public:
 private:
     using bitwise_key = typename Traits::bitwise_key;
     using multi_container = typename Traits::multi_container;
-    using node_ptr = typename Traits::node_ptr;
+    using node_base = typename Traits::node_base;
+    using node_ptr = node_base*;
     using fast_key_type = typename Traits::fast_key_type;
 
     // Leaves are always single-valued, so leaf count is the same as
@@ -32,19 +35,30 @@ private:
     using leaf_type =
         basic_leaf<header_type, typename Traits::mapped_type, typename Traits::allocator_type>;
 
-    using leaf_allocator_type = typename Traits::allocator_type::template rebind<leaf_type>::other;
-    using leaf_allocator_traits = std::allocator_traits<leaf_allocator_type>;
-
     using self_t = db<Traits>;
-    using db_leaf_unique_ptr = basic_db_leaf_unique_ptr<leaf_type, self_t>;
+    using node_unique_ptr = unique_node_ptr<node_base, self_t>;
+    using leaf_unique_ptr = unique_node_ptr<leaf_type, self_t>;
+
+    using inode = basic_inode_impl<self_t>;
+    using inode_4 = basic_inode_4<self_t>;
+    using inode_16 = basic_inode_16<self_t>;
+    using inode_48 = basic_inode_48<self_t>;
+    using inode_256 = basic_inode_256<self_t>;
 
     // We will be friends only with the nodes that have the same policy
-    friend basic_inode_impl<self_t>;
-    friend basic_inode_4<self_t>;
-    friend basic_inode_16<self_t>;
-    friend basic_inode_48<self_t>;
-    friend basic_inode_256<self_t>;
-    friend basic_leaf_deleter<leaf_type, self_t>;
+    friend inode;
+    friend inode_4;
+    friend inode_16;
+    friend inode_48;
+    friend inode_256;
+
+    // Make deleters friends
+    friend node_deleter<inode_4, self_t>;
+    friend node_deleter<inode_16, self_t>;
+    friend node_deleter<inode_48, self_t>;
+    friend node_deleter<inode_256, self_t>;
+    friend node_deleter<node_base, self_t>;
+    friend node_deleter<leaf_type, self_t>;
 
 public:
     using key_type = typename Traits::key_type;
@@ -189,51 +203,6 @@ public:
     [[nodiscard]] constexpr size_type inode48_count() const noexcept { return inode48_count_; }
     [[nodiscard]] constexpr size_type inode256_count() const noexcept { return inode256_count_; }
 
-    [[nodiscard]] constexpr std::uintmax_t created_inode4_count() const noexcept
-    {
-        return created_inode4_count_;
-    }
-
-    [[nodiscard]] constexpr std::uintmax_t inode4_to_inode16_count() const noexcept
-    {
-        return inode4_to_inode16_count_;
-    }
-
-    [[nodiscard]] constexpr std::uintmax_t inode16_to_inode48_count() const noexcept
-    {
-        return inode16_to_inode48_count_;
-    }
-
-    [[nodiscard]] constexpr std::uintmax_t inode48_to_inode256_count() const noexcept
-    {
-        return inode48_to_inode256_count_;
-    }
-
-    [[nodiscard]] constexpr std::uintmax_t deleted_inode4_count() const noexcept
-    {
-        return deleted_inode4_count_;
-    }
-
-    [[nodiscard]] constexpr std::uintmax_t inode16_to_inode4_count() const noexcept
-    {
-        return inode16_to_inode4_count_;
-    }
-
-    [[nodiscard]] constexpr std::uintmax_t inode48_to_inode16_count() const noexcept
-    {
-        return inode48_to_inode16_count_;
-    }
-
-    [[nodiscard]] constexpr std::uintmax_t inode256_to_inode48_count() const noexcept
-    {
-        return inode256_to_inode48_count_;
-    }
-
-    [[nodiscard]] constexpr std::uintmax_t key_prefix_splits() const noexcept
-    {
-        return key_prefix_splits_;
-    }
-
     // Debugging
     void dump(std::ostream& os) const;
 
@@ -245,11 +214,21 @@ protected:
     }
 
 private:
-    [[nodiscard]] const_iterator internal_locate(bitwise_key& key) const noexcept;
+    using key_size_type = typename bitwise_key::size_type;
+    using bitwise_key_prefix = std::pair<bitwise_key, key_size_type>;
+
+    static constexpr bitwise_key_prefix make_bitwise_key_prefix(fast_key_type key) noexcept
+    {
+        bitwise_key bitk(key);
+        return std::make_pair(bitk, bitk.max_size());
+    }
+
+    [[nodiscard]] const_iterator internal_locate(bitwise_key_prefix& key) const noexcept;
     [[nodiscard]] const_iterator internal_find(fast_key_type key) const noexcept;
 
     template <typename... Args>
-    [[nodiscard]] iterator internal_emplace(const_iterator hint, bitwise_key key, Args&&... args);
+    [[nodiscard]] iterator internal_emplace(const_iterator hint, const bitwise_key_prefix& key,
+                                            Args&&... args);
 
     template <typename... Args>
     [[nodiscard]] iterator emplace_key_args(std::true_type, fast_key_type key, Args&&... args);
@@ -267,10 +246,14 @@ private:
         return *static_cast<allocator_type*>(&data);
     }
 
-    void delete_subtree(node_ptr) noexcept
+    static constexpr inode* inode_cast(node_ptr node) noexcept { return static_cast<inode*>(node); }
+
+    void delete_subtree(node_ptr node) noexcept
     {
-        // default_policy::delete_db_node_ptr_at_scope_exit delete_on_scope_exit(node, *this);
-        // delete_on_scope_exit.delete_subtree();
+        assert(node != nullptr);
+        node_unique_ptr delete_on_scope_exit(node, node_deleter<node_base, self_t>(*this));
+        if (node->type() != node_type::LEAF)
+            inode_cast(node)->delete_subtree(*this);
     }
 
     constexpr void increase_memory_use(size_type delta) noexcept { current_memory_use_ += delta; }
@@ -281,25 +264,25 @@ private:
         current_memory_use_ -= delta;
     }
 
-    constexpr void increment_leaf_count() noexcept
-    {
-        increase_memory_use(sizeof(leaf_type));
-        ++leaf_count_;
-    }
-
-    constexpr void decrement_leaf_count() noexcept
-    {
-        decrease_memory_use(sizeof(leaf_type));
-        assert(leaf_count_ != 0);
-        --leaf_count_;
-    }
+    template <typename Node>
+    std::unique_ptr<Node, node_deleter<Node, self_t>> make_node_ptr(const bitwise_key_prefix& key,
+                                                                    node_ptr parent = nullptr);
 
     // Leaf creation/deallocation
-    [[nodiscard]] db_leaf_unique_ptr make_leaf_ptr(bitwise_key key);
+    [[nodiscard]] leaf_unique_ptr make_leaf_ptr(const bitwise_key_prefix& key);
     template <typename... Args>
-    [[nodiscard]] db_leaf_unique_ptr make_leaf_ptr(bitwise_key key, Args&&... args);
+    [[nodiscard]] leaf_unique_ptr make_leaf_ptr(const bitwise_key_prefix& key, Args&&... args);
 
+    template <typename Node> void deallocate_node(Node* node) noexcept;
+    void deallocate(inode_4* node) noexcept;
+    void deallocate(inode_16* node) noexcept;
+    void deallocate(inode_48* node) noexcept;
+    void deallocate(inode_256* node) noexcept;
     void deallocate(leaf_type* leaf) noexcept;
+    void deallocate(node_ptr node) noexcept;
+
+    template <typename NodePtr>
+    void release_to_parent(const_iterator hint, NodePtr&& child) noexcept;
 
 private:
     // A helper struct to get the empty base class optimization for 0 size allocators.
@@ -315,21 +298,6 @@ private:
     size_type inode16_count_{0};
     size_type inode48_count_{0};
     size_type inode256_count_{0};
-
-    // While the counters above cannot exceed the size_type (after all, there are limits to a
-    // physical machine), these counters may well reach the astronomical proportions during
-    // the lifetime of this ART frontend.
-    std::uintmax_t created_inode4_count_{0};
-    std::uintmax_t inode4_to_inode16_count_{0};
-    std::uintmax_t inode16_to_inode48_count_{0};
-    std::uintmax_t inode48_to_inode256_count_{0};
-
-    std::uintmax_t deleted_inode4_count_{0};
-    std::uintmax_t inode16_to_inode4_count_{0};
-    std::uintmax_t inode48_to_inode16_count_{0};
-    std::uintmax_t inode256_to_inode48_count_{0};
-
-    std::uintmax_t key_prefix_splits_{0};
 };
 
 } // namespace detail
