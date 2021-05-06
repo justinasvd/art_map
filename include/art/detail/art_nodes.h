@@ -454,6 +454,7 @@ public:
     {
         assert(this->type() == basic_inode_4::static_node_type);
         assert(child->prefix_length() >= 1);
+        child->reparent(this);
 
         auto children_count = this->children_count;
 
@@ -476,7 +477,6 @@ public:
             children[i] = children[i - 1];
         }
         keys.byte_array[insert_pos_index] = static_cast<std::uint8_t>(key_byte);
-        child->reparent(this);
         children[insert_pos_index] = child.release();
 
         ++children_count;
@@ -645,6 +645,7 @@ public:
         : parent_type(*source_node)
     {
         assert(child->prefix_length() >= 1);
+        child->reparent(this);
         const auto key_byte = child->pop_front();
 
         const auto keys_integer = source_node->keys.integer;
@@ -663,7 +664,6 @@ public:
         }
 
         keys.byte_array[i] = static_cast<std::uint8_t>(key_byte);
-        child->reparent(this);
         children[i] = child.release();
         ++i;
 
@@ -708,6 +708,7 @@ public:
     {
         assert(this->type() == basic_inode_16::static_node_type);
         assert(child->prefix_length() >= 1);
+        child->reparent(this);
 
         const auto key_byte = child->pop_front();
         auto children_count = this->children_count;
@@ -725,7 +726,6 @@ public:
                                children.begin() + children_count + 1);
         }
         keys.byte_array[insert_pos_index] = key_byte;
-        child->reparent(this);
         children[insert_pos_index] = child.release();
         ++children_count;
         this->children_count = children_count;
@@ -860,6 +860,8 @@ public:
                              leaf_unique_ptr child) noexcept
         : parent_type(*source_node)
     {
+        child->reparent(this);
+
         auto* const __restrict__ source_node_ptr = source_node.get();
         auto* const __restrict__ child_ptr = child.release();
 
@@ -876,9 +878,10 @@ public:
         }
         for (i = 0; i < inode16_type::capacity; ++i) {
             this->children.pointer_array[i] = source_node_ptr->children[i];
+            this->children.pointer_array[i]->reparent(this);
         }
 
-        const auto key_byte = child->pop_front();
+        const auto key_byte = child_ptr->pop_front();
         assert(this->child_indexes[key_byte] == empty_child);
         this->child_indexes[key_byte] = i;
         this->children.pointer_array[i] = child_ptr;
@@ -919,6 +922,7 @@ public:
     {
         assert(this->type() == basic_inode_48::static_node_type);
         assert(child->prefix_length() >= 1);
+        child->reparent(this);
 
         const auto key_byte = child->pop_front();
         assert(child_indexes[key_byte] == empty_child);
@@ -1083,6 +1087,7 @@ public:
         : parent_type(*source_node)
     {
         assert(child->prefix_length() >= 1);
+        child->reparent(this);
 
         unsigned children_copied = 0;
         unsigned i = 0;
@@ -1092,6 +1097,7 @@ public:
                 children[i] = nullptr;
             } else {
                 children[i] = source_node->children.pointer_array[children_i];
+                children[i]->reparent(this);
                 ++children_copied;
                 if (children_copied == inode48_type::capacity)
                     break;
@@ -1113,10 +1119,10 @@ public:
         assert(this->type() == basic_inode_256::static_node_type);
         assert(!this->is_full());
         assert(child->prefix_length() >= 1);
+        child->reparent(this);
 
         const auto key_byte = child->pop_front();
         assert(children[key_byte] == nullptr);
-        child->reparent(this);
         children[key_byte] = child.release();
         ++this->children_count;
     }

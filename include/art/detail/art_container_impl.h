@@ -181,8 +181,8 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
         return leaf_iter;
     }
 
-    const node_ptr pdst = hint ? hint.node : data.root;
-
+    assert(hint);
+    const node_ptr pdst = hint.node;
     const node_type dst_type = pdst->type();
 
     if (dst_type == node_type::LEAF) {
