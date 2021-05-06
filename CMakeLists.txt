@@ -2,15 +2,17 @@
 
 cmake_minimum_required(VERSION 3.12)
 
-project(btree_map VERSION 0.1
-  DESCRIPTION "std::map reimplementation using B-tree"
-  HOMEPAGE_URL "https://github.com/justinasvd/btree_map" LANGUAGES CXX)
+project(art_map VERSION 0.1
+  DESCRIPTION "std::map reimplementation using Adaptive Radix Tree"
+  HOMEPAGE_URL "https://github.com/justinasvd/art_map" LANGUAGES CXX)
 
 # Guard against in-source builds
 if (${CMAKE_SOURCE_DIR} STREQUAL ${CMAKE_BINARY_DIR})
   message(FATAL_ERROR "In-source builds not allowed. Please make a new directory (called a build directory) and run cmake from there.
 You may need to remove CMakeCache.txt.")
 endif()
+
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -msse4.2")
 
 # ThreadSanitizer
 set(CMAKE_C_FLAGS_TSAN

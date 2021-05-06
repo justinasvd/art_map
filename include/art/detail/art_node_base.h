@@ -26,6 +26,12 @@ template <typename Header> struct art_node_base {
     {
     }
 
+    constexpr art_node_base(node_type type, const std::pair<bitwise_key, key_size_type>& prefix,
+                            art_node_base* parent) noexcept
+        : art_node_base(type, prefix.first, prefix.second, parent)
+    {
+    }
+
     [[nodiscard]] node_type type() const noexcept { return header.type(); }
 
     [[nodiscard]] art_node_base* parent() const noexcept { return parent_; }
@@ -35,27 +41,45 @@ template <typename Header> struct art_node_base {
         parent_ = parent;
     }
 
-    // This is meaningful for internal nodes only
-    [[nodiscard]] constexpr key_size_type prefix_length() const noexcept
+    [[nodiscard]] constexpr std::pair<bitwise_key, key_size_type> prefix() const noexcept
     {
-        return header.prefix_length();
+        return std::make_pair(header.key(), header.size());
+    }
+
+    // This is meaningful for internal nodes only
+    [[nodiscard]] constexpr key_size_type prefix_length() const noexcept { return header.size(); }
+    [[nodiscard]] constexpr key_size_type shared_prefix_length(bitwise_key key,
+                                                               key_size_type size) const noexcept
+    {
+        return bitwise_key::shared_len(key, header.key(), size);
     }
     [[nodiscard]] constexpr key_size_type shared_prefix_length(bitwise_key key) const noexcept
     {
-        return header.shared_prefix_length(key);
+        return shared_prefix_length(key, header.size());
     }
-    [[nodiscard]] constexpr std::pair<bitwise_key, key_size_type> shared_prefix(
+    [[nodiscard]] std::pair<bitwise_key, key_size_type> shared_prefix(
         bitwise_key key, key_size_type size) const noexcept
     {
-        return header.shared_prefix(key, size);
+        const key_size_type shared_size = shared_prefix_length(key, size);
+        return std::make_pair(bitwise_key::partial_key(key, shared_size), shared_size);
+    }
+    [[nodiscard]] std::pair<bitwise_key, key_size_type> shared_prefix(
+        bitwise_key key) const noexcept
+    {
+        return shared_prefix(key, header.size());
     }
 
     // This is meaningful for leaves only
-    [[nodiscard]] bool match(bitwise_key key) const noexcept { return header.match(key); }
+    [[nodiscard]] bool match(bitwise_key key) const noexcept { return key.match(header.key()); }
 
     // Prefix manipulation routines
     constexpr void shift_right(key_size_type size) noexcept { header.shift_right(size); }
-    [[nodiscard]] constexpr std::uint8_t pop_front() noexcept { return header.pop_front(); }
+    [[nodiscard]] constexpr std::uint8_t pop_front() noexcept
+    {
+        const std::uint8_t front = header.key().front();
+        header.shift_right(1);
+        return front;
+    }
 
     void dump(std::ostream& os) const
     {
@@ -81,9 +105,10 @@ template <typename Header> struct art_node_base {
         const key_size_type len = prefix_length();
         os << " key prefix len = " << len;
         if (len) {
+            const auto key = header.key();
             os << ", key prefix =";
             for (key_size_type i = 0; i != len; ++i)
-                dump_byte(os, header[i]);
+                dump_byte(os, key[i]);
         }
     }
 

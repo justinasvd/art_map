@@ -36,7 +36,6 @@ private:
         basic_leaf<header_type, typename Traits::mapped_type, typename Traits::allocator_type>;
 
     using self_t = db<Traits>;
-    using node_unique_ptr = unique_node_ptr<node_base, self_t>;
     using leaf_unique_ptr = unique_node_ptr<leaf_type, self_t>;
 
     using inode = basic_inode_impl<self_t>;
@@ -116,7 +115,7 @@ public:
     reverse_iterator rend() { return reverse_iterator(begin()); }
     const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
 
-    size_type size() const noexcept { return leaf_count_; }
+    size_type size() const noexcept { return leaf_count(); }
     bool empty() const noexcept { return data.root == nullptr; }
 
     // Lookup routines
@@ -197,11 +196,20 @@ public:
         return current_memory_use_;
     }
 
-    [[nodiscard]] constexpr size_type leaf_count() const noexcept { return leaf_count_; }
-    [[nodiscard]] constexpr size_type inode4_count() const noexcept { return inode4_count_; }
-    [[nodiscard]] constexpr size_type inode16_count() const noexcept { return inode16_count_; }
-    [[nodiscard]] constexpr size_type inode48_count() const noexcept { return inode48_count_; }
-    [[nodiscard]] constexpr size_type inode256_count() const noexcept { return inode256_count_; }
+    [[nodiscard]] constexpr size_type leaf_count() const noexcept { return get_count<leaf_type>(); }
+    [[nodiscard]] constexpr size_type inode4_count() const noexcept { return get_count<inode_4>(); }
+    [[nodiscard]] constexpr size_type inode16_count() const noexcept
+    {
+        return get_count<inode_16>();
+    }
+    [[nodiscard]] constexpr size_type inode48_count() const noexcept
+    {
+        return get_count<inode_48>();
+    }
+    [[nodiscard]] constexpr size_type inode256_count() const noexcept
+    {
+        return get_count<inode_256>();
+    }
 
     // Debugging
     void dump(std::ostream& os) const;
@@ -246,43 +254,68 @@ private:
         return *static_cast<allocator_type*>(&data);
     }
 
+    template <typename Node> constexpr size_type get_count() const noexcept
+    {
+        return std::get<counter<Node>>(count_).instances;
+    }
+
+    template <typename Node> constexpr size_type& count() noexcept
+    {
+        return std::get<counter<Node>>(count_).instances;
+    }
+
     static constexpr inode* inode_cast(node_ptr node) noexcept { return static_cast<inode*>(node); }
+
+    template <typename Node> unique_node_ptr<Node, self_t> make_unique_node_ptr(Node* node) noexcept
+    {
+        assert(node != nullptr);
+        using ptr_type = unique_node_ptr<Node, self_t>;
+        return ptr_type(node, node_deleter<Node, self_t>(*this));
+    }
 
     void delete_subtree(node_ptr node) noexcept
     {
-        assert(node != nullptr);
-        node_unique_ptr delete_on_scope_exit(node, node_deleter<node_base, self_t>(*this));
+        auto delete_on_scope_exit = make_unique_node_ptr(node);
         if (node->type() != node_type::LEAF)
             inode_cast(node)->delete_subtree(*this);
     }
 
-    constexpr void increase_memory_use(size_type delta) noexcept { current_memory_use_ += delta; }
-
-    constexpr void decrease_memory_use(size_type delta) noexcept
+    template <typename Node> constexpr void increase_memory_use() noexcept
     {
-        assert(delta <= current_memory_use_);
-        current_memory_use_ -= delta;
+        current_memory_use_ += sizeof(Node);
+        ++count<Node>();
     }
 
-    template <typename Node>
-    std::unique_ptr<Node, node_deleter<Node, self_t>> make_node_ptr(const bitwise_key_prefix& key,
-                                                                    node_ptr parent = nullptr);
+    template <typename Node> constexpr void decrease_memory_use() noexcept
+    {
+        assert(sizeof(Node) <= current_memory_use_);
+        current_memory_use_ -= sizeof(Node);
+        assert(count<Node>() != 0);
+        --count<Node>();
+    }
+
+    template <typename Node, typename... Args>
+    std::unique_ptr<Node, node_deleter<Node, self_t>> make_node_ptr(Args&&... args);
 
     // Leaf creation/deallocation
-    [[nodiscard]] leaf_unique_ptr make_leaf_ptr(const bitwise_key_prefix& key);
     template <typename... Args>
     [[nodiscard]] leaf_unique_ptr make_leaf_ptr(const bitwise_key_prefix& key, Args&&... args);
 
     template <typename Node> void deallocate_node(Node* node) noexcept;
-    void deallocate(inode_4* node) noexcept;
-    void deallocate(inode_16* node) noexcept;
-    void deallocate(inode_48* node) noexcept;
-    void deallocate(inode_256* node) noexcept;
+    void deallocate(inode_4* node) noexcept { deallocate_node(node); }
+    void deallocate(inode_16* node) noexcept { deallocate_node(node); }
+    void deallocate(inode_48* node) noexcept { deallocate_node(node); }
+    void deallocate(inode_256* node) noexcept { deallocate_node(node); }
     void deallocate(leaf_type* leaf) noexcept;
     void deallocate(node_ptr node) noexcept;
 
-    template <typename NodePtr>
-    void release_to_parent(const_iterator hint, NodePtr&& child) noexcept;
+    template <typename NodePtr> void release_to_parent(const_iterator hint, NodePtr child) noexcept;
+
+    void create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix, node_ptr pdst,
+                        leaf_unique_ptr leaf);
+
+    template <typename Source, typename Dest>
+    void grow_node(const_iterator hint, node_ptr source_node, leaf_unique_ptr leaf);
 
 private:
     // A helper struct to get the empty base class optimization for 0 size allocators.
@@ -293,11 +326,13 @@ private:
 
     size_type current_memory_use_{0};
 
-    size_type leaf_count_{0};
-    size_type inode4_count_{0};
-    size_type inode16_count_{0};
-    size_type inode48_count_{0};
-    size_type inode256_count_{0};
+    template <typename T> struct counter {
+        size_type instances{0};
+    };
+
+    using node_stats = std::tuple<counter<leaf_type>, counter<inode_4>, counter<inode_16>,
+                                  counter<inode_48>, counter<inode_256>>;
+    node_stats count_;
 };
 
 } // namespace detail

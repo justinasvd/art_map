@@ -2,6 +2,7 @@
 #define ART_DETAIL_ART_CONTAINER_IMPL_HEADER_INCLUDED
 
 #include "art_container.h"
+#include "art_deleter.h"
 #include "art_nodes.h"
 
 #include <boost/config.hpp>
@@ -54,34 +55,22 @@ inline typename db<P>::const_iterator db<P>::internal_find(fast_key_type key) co
 }
 
 template <typename P>
-template <typename Node>
-inline std::unique_ptr<Node, node_deleter<Node, db<P>>> db<P>::make_node_ptr(
-    const bitwise_key_prefix& key, node_ptr parent)
+template <typename Node, typename... Args>
+inline std::unique_ptr<Node, node_deleter<Node, db<P>>> db<P>::make_node_ptr(Args&&... args)
 {
     using unique_node_ptr = std::unique_ptr<Node, node_deleter<Node, db<P>>>;
 
     using node_allocator_type = typename P::allocator_type::template rebind<Node>::other;
     using node_allocator_traits = std::allocator_traits<node_allocator_type>;
 
-    assert(!parent || parent->type() != node_type::LEAF);
-
     node_allocator_type alloc(allocator());
     unique_node_ptr node_ptr(node_allocator_traits::allocate(alloc, 1),
                              node_deleter<Node, self_t>(*this));
 
-    node_allocator_traits::construct(alloc, node_ptr.get(), key.first, key.second, parent);
+    node_allocator_traits::construct(alloc, node_ptr.get(), std::forward<Args>(args)...);
 
-    increase_memory_use(sizeof(Node));
+    increase_memory_use<Node>();
     return node_ptr;
-}
-
-template <typename P>
-inline typename db<P>::leaf_unique_ptr db<P>::make_leaf_ptr(const bitwise_key_prefix& key)
-{
-    // Allocate a single leaf
-    leaf_unique_ptr leaf_ptr = make_node_ptr<leaf_type>(key);
-    ++leaf_count_;
-    return leaf_ptr;
 }
 
 template <typename P>
@@ -89,7 +78,8 @@ template <typename... Args>
 inline typename db<P>::leaf_unique_ptr db<P>::make_leaf_ptr(const bitwise_key_prefix& key,
                                                             Args&&... args)
 {
-    auto leaf = make_leaf_ptr(key);
+    // Allocate a single leaf
+    auto leaf = make_node_ptr<leaf_type>(key.first, key.second);
     // Emplace the value into the leaf
     leaf->emplace_value(allocator(), std::forward<Args>(args)...);
     return leaf;
@@ -105,43 +95,13 @@ inline void db<P>::deallocate_node(Node* node) noexcept
     node_allocator_type alloc(allocator());
     node_allocator_traits::deallocate(alloc, node, 1);
 
-    decrease_memory_use(sizeof(Node));
-}
-
-template <typename P> inline void db<P>::deallocate(inode_4* node) noexcept
-{
-    deallocate_node<inode_4>(node);
-    assert(inode4_count_ != 0);
-    --inode4_count_;
-}
-
-template <typename P> inline void db<P>::deallocate(inode_16* node) noexcept
-{
-    deallocate_node<inode_16>(node);
-    assert(inode16_count_ != 0);
-    --inode16_count_;
-}
-
-template <typename P> inline void db<P>::deallocate(inode_48* node) noexcept
-{
-    deallocate_node<inode_48>(node);
-    assert(inode48_count_ != 0);
-    --inode48_count_;
-}
-
-template <typename P> inline void db<P>::deallocate(inode_256* node) noexcept
-{
-    deallocate_node<basic_inode_256<self_t>>(node);
-    assert(inode256_count_ != 0);
-    --inode256_count_;
+    decrease_memory_use<Node>();
 }
 
 template <typename P> inline void db<P>::deallocate(leaf_type* leaf) noexcept
 {
     leaf->destroy_value(allocator());
-    deallocate_node<leaf_type>(leaf);
-    assert(leaf_count_ != 0);
-    --leaf_count_;
+    deallocate_node(leaf);
 }
 
 template <typename P> inline void db<P>::deallocate(node_ptr node) noexcept
@@ -169,15 +129,36 @@ template <typename P> inline void db<P>::deallocate(node_ptr node) noexcept
 
 template <typename P>
 template <typename NodePtr>
-inline void db<P>::release_to_parent(const_iterator hint, NodePtr&& child) noexcept
+inline void db<P>::release_to_parent(const_iterator hint, NodePtr child) noexcept
 {
-    if (child->parent()) {
-        // Release to the parent
-        assert(child->parent() == hint.node);
-        assert(false);
+    if (BOOST_LIKELY(child->parent() != nullptr)) {
+        const auto parent = inode_cast(child->parent());
+        // Downcast the child pointer. It doesn't really matter here that the
+        // "generic" deleter is slow, because we won't call that deleter.
+        parent->replace(hint.position, make_unique_node_ptr<node_base>(child.release()));
     } else {
         data.root = child.release();
     }
+}
+
+template <typename P>
+inline void db<P>::create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix,
+                                  node_ptr pdst, leaf_unique_ptr leaf)
+{
+    auto new_node = make_node_ptr<inode_4>(prefix, pdst->parent());
+
+    new_node->add_two_to_empty(pdst, std::move(leaf));
+    release_to_parent(hint, std::move(new_node));
+}
+
+template <typename P>
+template <typename Source, typename Dest>
+inline void db<P>::grow_node(const_iterator hint, node_ptr source_node, leaf_unique_ptr leaf)
+{
+    assert(leaf->prefix_length() >= 1);
+    auto src = make_unique_node_ptr(static_cast<Source*>(source_node));
+    auto dst = make_node_ptr<Dest>(std::move(src), std::move(leaf));
+    release_to_parent(hint, std::move(dst));
 }
 
 template <typename P>
@@ -197,124 +178,47 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
     if (BOOST_UNLIKELY(empty())) {
         assert(!hint);
         data.root = leaf_ptr.release();
-    } else {
-        node_ptr pdst = hint ? hint.node : data.root;
-
-        const key_size_type min_ksize = std::min(pdst->prefix_length(), key.second);
-
-        if (pdst->type() == node_type::LEAF) {
-            // Can only happen in multivalued container case
-            if (BOOST_UNLIKELY(pdst->match(key.first))) {
-                // Not yet supported
-                assert(false);
-            }
-
-            assert(min_ksize > 1);
-
-            // Put the 2 leaves under the single inode_4 and set the
-            // new inode_4's parent to the existing nodes's parent.
-            auto new_node = make_node_ptr<inode_4>(pdst->shared_prefix(key.first, min_ksize - 1),
-                                                   pdst->parent());
-            ++inode4_count_;
-
-            new_node->add_two_to_empty(pdst, std::move(leaf_ptr));
-            release_to_parent(hint, std::move(new_node));
-        } else {
-
-            assert(false);
-        }
+        return leaf_iter;
     }
 
-    /*
-     while (true) {
+    const node_ptr pdst = hint ? hint.node : data.root;
 
-         assert(node_type != detail::node_type::LEAF);
-         assert(depth < detail::art_key::size);
+    const node_type dst_type = pdst->type();
 
-         const auto key_prefix_length = node->internal->key_prefix_length();
-         const auto shared_prefix_len = node->internal->get_shared_key_prefix_length(remaining_key);
-         if (shared_prefix_len < key_prefix_length) {
-             auto leaf = art_policy::make_db_leaf_ptr(k, v, *this);
-             increase_memory_use(sizeof(detail::inode_4));
-             auto new_node =
-                 detail::inode_4::create(*node, shared_prefix_len, depth, std::move(leaf));
-             *node = detail::node_ptr{new_node.release()};
-             ++inode4_count;
-             ++created_inode4_count;
-             ++key_prefix_splits;
-             assert(created_inode4_count >= inode4_count);
-             assert(created_inode4_count > key_prefix_splits);
-             return true;
-         }
+    if (dst_type == node_type::LEAF) {
+        // Can only happen in multivalued container case
+        if (BOOST_UNLIKELY(pdst->match(key.first))) {
+            // Not yet supported
+            assert(false);
+        }
 
-         assert(shared_prefix_len == key_prefix_length);
-         depth += key_prefix_length;
-         remaining_key.shift_right(key_prefix_length);
+        const key_size_type min_ksize = std::min(pdst->prefix_length(), key.second);
+        assert(min_ksize > 1);
 
-         auto* const child = node->internal->find_child(node_type, remaining_key[0]).second;
+        // Put the 2 leaves under the single inode_4
+        create_inode_4(hint, pdst->shared_prefix(key.first, min_ksize - 1), pdst,
+                       std::move(leaf_ptr));
+        return leaf_iter;
+    }
 
-         if (child == nullptr) {
-             auto leaf = art_policy::make_db_leaf_ptr(k, v, *this);
+    if (key.second > pdst->prefix_length() &&
+        pdst->shared_prefix_length(key.first) < pdst->prefix_length()) {
+        // Needs to split the key prefix
+        create_inode_4(hint, pdst->shared_prefix(key.first), pdst, std::move(leaf_ptr));
+        return leaf_iter;
+    }
 
-             const auto node_is_full = node->internal->is_full();
-
-             if (likely(!node_is_full)) {
-                 node->internal->add(std::move(leaf), depth);
-                 return true;
-             }
-
-             assert(node_is_full);
-
-             if (node_type == detail::node_type::I4) {
-                 assert(inode4_count > 0);
-
-                 increase_memory_use(sizeof(detail::inode_16) - sizeof(detail::inode_4));
-                 std::unique_ptr<detail::inode_4> current_node{node->node_4};
-                 auto larger_node =
-                     detail::inode_16::create(std::move(current_node), std::move(leaf), depth);
-                 *node = detail::node_ptr{larger_node.release()};
-
-                 --inode4_count;
-                 ++inode16_count;
-                 ++inode4_to_inode16_count;
-                 assert(inode4_to_inode16_count >= inode16_count);
-
-             } else if (node_type == detail::node_type::I16) {
-                 assert(inode16_count > 0);
-
-                 std::unique_ptr<detail::inode_16> current_node{node->node_16};
-                 increase_memory_use(sizeof(detail::inode_48) - sizeof(detail::inode_16));
-                 auto larger_node =
-                     detail::inode_48::create(std::move(current_node), std::move(leaf), depth);
-                 *node = detail::node_ptr{larger_node.release()};
-
-                 --inode16_count;
-                 ++inode48_count;
-                 ++inode16_to_inode48_count;
-                 assert(inode16_to_inode48_count >= inode48_count);
-
-             } else {
-                 assert(inode48_count > 0);
-
-                 assert(node_type == detail::node_type::I48);
-                 std::unique_ptr<detail::inode_48> current_node{node->node_48};
-                 increase_memory_use(sizeof(detail::inode_256) - sizeof(detail::inode_48));
-                 auto larger_node =
-                     detail::inode_256::create(std::move(current_node), std::move(leaf), depth);
-                 *node = detail::node_ptr{larger_node.release()};
-
-                 --inode48_count;
-                 ++inode256_count;
-                 ++inode48_to_inode256_count;
-                 assert(inode48_to_inode256_count >= inode256_count);
-             }
-             return true;
-         }
-
-         node = reinterpret_cast<detail::node_ptr*>(child);
-         ++depth;
-         remaining_key.shift_right(1);
-     }*/
+    if (!inode_cast(pdst)->add(leaf_ptr)) {
+        // The destination node is full. Resize the destination node
+        if (dst_type == node_type::I4) {
+            grow_node<inode_4, inode_16>(hint, pdst, std::move(leaf_ptr));
+        } else if (dst_type == node_type::I16) {
+            grow_node<inode_16, inode_48>(hint, pdst, std::move(leaf_ptr));
+        } else {
+            assert(dst_type == node_type::I48);
+            grow_node<inode_48, inode_256>(hint, pdst, std::move(leaf_ptr));
+        }
+    }
 
     return leaf_iter;
 }
@@ -439,12 +343,7 @@ template <typename P> inline void db<P>::swap(self_t& other) noexcept
 
     // Swap the stats
     std::swap(current_memory_use_, other.current_memory_use_);
-
-    std::swap(leaf_count_, other.leaf_count_);
-    std::swap(inode4_count_, other.inode4_count_);
-    std::swap(inode16_count_, other.inode16_count_);
-    std::swap(inode48_count_, other.inode48_count_);
-    std::swap(inode256_count_, other.inode256_count_);
+    std::swap(count_, other.count_);
 }
 
 template <typename P> inline void db<P>::clear()
@@ -452,16 +351,10 @@ template <typename P> inline void db<P>::clear()
     if (!empty()) {
         delete_subtree(data.root);
 
-        // It is possible to reset the counter to zero instead of decrementing it for
-        // each leaf, but not sure the savings will be significant.
-        assert(leaf_count_ == 0);
-
-        data.root = node_ptr{nullptr};
+        assert(leaf_count() == 0);
+        data.root = nullptr;
         current_memory_use_ = 0;
-        inode4_count_ = 0;
-        inode16_count_ = 0;
-        inode48_count_ = 0;
-        inode256_count_ = 0;
+        count_ = node_stats{};
     }
 }
 
