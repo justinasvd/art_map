@@ -64,12 +64,17 @@ template <typename Header> struct art_node_base {
     [[nodiscard]] bool match(bitwise_key key) const noexcept { return key.match(header.key()); }
 
     // Prefix manipulation routines
-    constexpr void shift_right(key_size_type size) noexcept { header.shift_right(size); }
     [[nodiscard]] constexpr std::uint8_t pop_front() noexcept
     {
-        const std::uint8_t front = header.key().front();
+        const std::uint8_t front = header.front();
         header.shift_right(1);
         return front;
+    }
+    constexpr void shift_right(key_size_type size) noexcept { header.shift_right(size); }
+    constexpr void push_front(std::uint8_t key) noexcept { header.push_front(key); }
+    constexpr void push_front(const std::pair<bitwise_key, key_size_type>& prefix) noexcept
+    {
+        header.push_front(prefix.first, prefix.second);
     }
 
     void dump(std::ostream& os) const

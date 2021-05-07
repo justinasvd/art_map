@@ -108,9 +108,20 @@ template <typename T, typename Key, typename Policy> struct unsigned_integral_bi
         return key.bytes[index];
     }
 
-    [[nodiscard]] std::uint8_t front() const noexcept { return key.bytes[0]; }
+    [[nodiscard]] constexpr std::uint8_t front() const noexcept { return key.bytes[0]; }
 
-    void shift_right(size_type nbytes) noexcept { key.bitkey >>= (nbytes * CHAR_BIT); }
+    constexpr void push_front(std::uint8_t value) noexcept
+    {
+        shift_left(1);
+        key.bytes[0] = value;
+    }
+    constexpr void push_front(unsigned_integral_bitwise_key value, size_type len) noexcept
+    {
+        shift_left(len);
+        key.bitkey |= value.key.bitkey;
+    }
+
+    constexpr void shift_right(size_type nbytes) noexcept { key.bitkey >>= (nbytes * CHAR_BIT); }
 
     [[nodiscard]] static size_type shared_len(unsigned_integral_bitwise_key k1,
                                               unsigned_integral_bitwise_key k2,
@@ -132,7 +143,7 @@ template <typename T, typename Key, typename Policy> struct unsigned_integral_bi
 
 private:
     // Non-byte-swapping constructor
-    constexpr unsigned_integral_bitwise_key(T k, std::false_type) noexcept
+    constexpr unsigned_integral_bitwise_key(Key k, std::false_type) noexcept
         : key{k}
     {
     }
@@ -141,6 +152,8 @@ private:
     {
         return static_cast<Key>(1) << (len * CHAR_BIT);
     }
+
+    constexpr void shift_left(size_type nbytes) noexcept { key.bitkey <<= (nbytes * CHAR_BIT); }
 
     union {
         Key bitkey;

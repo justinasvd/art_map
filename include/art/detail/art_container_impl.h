@@ -146,7 +146,7 @@ template <typename P>
 inline void db<P>::create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix,
                                   node_ptr pdst, leaf_unique_ptr leaf)
 {
-    auto new_node = make_node_ptr<inode_4>(prefix, hint.parent());
+    auto new_node = make_node_ptr<inode_4>(prefix);
     new_node->add_two_to_empty(pdst, std::move(leaf));
     release_to_parent(hint, std::move(new_node));
 }
@@ -258,11 +258,11 @@ inline std::pair<typename db<P>::iterator, bool> db<P>::emplace_key_args(std::fa
 
 template <typename P>
 template <typename Source, typename Dest>
-inline void db<P>::shrink_node(const_iterator pos, node_ptr source_node) noexcept
+inline void db<P>::shrink_node(const_iterator pos) noexcept
 {
-    // auto src = make_unique_node_ptr(static_cast<Source*>(source_node));
-    // auto dst = make_node_ptr<Dest>(std::move(src), std::move(leaf));
-    // release_to_parent(hint, std::move(dst));
+    auto src = make_unique_node_ptr(static_cast<Source*>(pos.parent()));
+    auto rem = make_node_ptr<Dest>(std::move(src), pos.position, *this);
+    release_to_parent(pos.parent()->iterator(), std::move(rem));
 }
 
 template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_type key)
@@ -277,28 +277,30 @@ template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_typ
 
         // Remove a leaf from its parent. In case of the no parent case,
         // we'll simply delete the root leaf
-        if (BOOST_UNLIKELY(pos.parent() == nullptr)) {
+        const auto parent = pos.parent();
+
+        if (BOOST_UNLIKELY(parent == nullptr)) {
             assert(pos.node == tree.root);
             deallocate(static_cast<leaf_type*>(tree.root));
             tree.root = nullptr;
-        } else if (!pos.parent()->remove(pos.position, *this)) {
-            assert(false);
-            // const node_type parent_type = parent->type();
+        } else if (!parent->remove(pos.position, *this)) {
+            const node_type parent_type = parent->type();
 
-            // // The destination node is too small. Resize the destination node
-            // if (parent_type == node_type::I4) {
-            //     // std::unique_ptr<inode_4> current_node{node->node_4};
-            //     // *node = current_node->leave_last_child(child_i, *this);
-            //     // decrease_memory_use(sizeof(inode_4));
-            //     // grow_node<inode_4, inode_16>(hint, pdst, std::move(leaf_ptr));
-            // } else if (parent_type == node_type::I16) {
-            //     shrink_node<inode_16, inode_4>(pos, parent);
-            // } else if (parent_type == node_type::I48) {
-            //     shrink_node<inode_48, inode_16>(pos, parent);
-            // } else {
-            //     assert(parent_type == node_type::I256);
-            //     shrink_node<inode_256, inode_48>(pos, parent);
-            // }
+            // We have failed to remove the value from the node because
+            // the node would become undersized after the operation. We have
+            // to shrink the node and remove the value at the same token.
+            if (parent_type == node_type::I4) {
+                auto src = make_unique_node_ptr(static_cast<inode_4*>(parent));
+                auto rem = src->leave_last_child(pos.position, *this);
+                release_to_parent(parent->iterator(), std::move(rem));
+            } else if (parent_type == node_type::I16) {
+                shrink_node<inode_16, inode_4>(pos);
+            } else if (parent_type == node_type::I48) {
+                shrink_node<inode_48, inode_16>(pos);
+            } else {
+                assert(parent_type == node_type::I256);
+                shrink_node<inode_256, inode_48>(pos);
+            }
         }
 
         removed = 1;
@@ -329,11 +331,8 @@ template <typename P> inline void db<P>::clear()
 {
     if (!empty()) {
         delete_subtree(tree.root);
-
         assert(leaf_count() == 0);
         tree.root = nullptr;
-        current_memory_use_ = 0;
-        count_ = node_stats_type{};
     }
 }
 

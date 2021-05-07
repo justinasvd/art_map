@@ -4,7 +4,6 @@
 #include "art_node_base.h"
 #include "dump_byte.h"
 #include "ffs_nonzero.h"
-#include "tree_depth.h"
 
 #if !defined(NDEBUG)
 #include <iostream>
@@ -66,25 +65,6 @@ public:
     using node_unique_ptr = unique_node_ptr<base_t, Db>;
 
 public:
-    constexpr void prepend_key_prefix(const basic_inode_impl& prefix1,
-                                      std::uint8_t prefix2) noexcept
-    {
-        /*assert(key_prefix_length() + prefix1.key_prefix_length() < key_prefix_capacity);
-
-        const auto type = static_cast<std::uint8_t>(this->type());
-        const auto prefix_u64 = header_as_uint64() & key_bytes_mask;
-        const auto trailing_prefix_shift = (prefix1.key_prefix_length() + 1U) * 8U;
-        const auto shifted_prefix_u64 = prefix_u64 << trailing_prefix_shift;
-        const auto shifted_prefix2 = static_cast<std::uint64_t>(prefix2) << trailing_prefix_shift;
-        const auto prefix1_mask = ((1ULL << trailing_prefix_shift) - 1) ^ 0xFFU;
-        const auto masked_prefix1 = prefix1.header_as_uint64() & prefix1_mask;
-        const auto prefix_result = shifted_prefix_u64 | shifted_prefix2 | masked_prefix1 | type;
-        set_header(prefix_result);
-
-        f.f.key_prefix_length =
-            static_cast<key_prefix_size>(key_prefix_length() + prefix1.key_prefix_length() + 1);*/
-    }
-
     [[gnu::cold, gnu::noinline]] void dump(std::ostream& os) const
     {
         os << " parent = " << parent() << " #children = "
@@ -223,11 +203,17 @@ public:
         }
     }
 
+    typename Db::const_iterator iterator() const noexcept
+    {
+        return typename Db::const_iterator(parent_.first, parent_.second,
+                                           parent() ? parent_.first->parent() : nullptr);
+    }
+
 protected:
     constexpr basic_inode_impl(node_type type, unsigned min_size, bitwise_key key,
-                               key_size_type key_size, inode_type* parent = nullptr) noexcept
+                               key_size_type key_size) noexcept
         : base_t(assert_non_leaf(type), key, key_size)
-        , parent_(parent)
+        , parent_{}
         , children_count(min_size)
     {
     }
@@ -235,17 +221,17 @@ protected:
     template <typename SourceNode>
     constexpr basic_inode_impl(node_type type, unsigned min_size, const SourceNode& node) noexcept
         : base_t(assert_non_leaf(type), node.prefix())
-        , parent_(node.parent())
+        , parent_{}
         , children_count(min_size)
     {
     }
 
-    inode_type* parent() const noexcept { return parent_; }
+    inode_type* parent() const noexcept { return parent_.first; }
 
-    void reparent(node_ptr node) noexcept
+    void reparent(node_ptr node, std::uint8_t index) noexcept
     {
         if (node->type() != node_type::LEAF) {
-            static_cast<inode_type*>(node)->parent_ = this;
+            static_cast<inode_type*>(node)->parent_ = std::make_pair(this, index);
         }
     }
 
@@ -272,7 +258,7 @@ private:
     }
 
 protected:
-    inode_type* parent_;
+    std::pair<inode_type*, std::uint8_t> parent_;
     std::uint8_t children_count;
 };
 
@@ -295,28 +281,14 @@ public:
     using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
     using node_unique_ptr = typename parent_type::node_unique_ptr;
 
-    constexpr basic_inode(bitwise_key key, key_size_type key_size,
-                          parent_type* parent = nullptr) noexcept
-        : parent_type(NodeType, MinSize, key, key_size, parent)
+    constexpr basic_inode(bitwise_key key, key_size_type key_size) noexcept
+        : parent_type(NodeType, MinSize, key, key_size)
     {
     }
 
-    explicit constexpr basic_inode(const std::pair<bitwise_key, key_size_type>& prefix,
-                                   parent_type* parent = nullptr) noexcept
-        : parent_type(NodeType, MinSize, prefix.first, prefix.second, parent)
+    explicit constexpr basic_inode(const std::pair<bitwise_key, key_size_type>& prefix) noexcept
+        : parent_type(NodeType, MinSize, prefix.first, prefix.second)
     {
-    }
-
-    [[nodiscard]] static constexpr auto create(std::unique_ptr<LargerDerived>&& source_node,
-                                               std::uint8_t child_to_delete, Db& db_instance)
-    {
-        return std::make_unique<Derived>(std::move(source_node), child_to_delete, db_instance);
-    }
-
-    [[nodiscard]] static constexpr auto create(std::unique_ptr<SmallerDerived>&& source_node,
-                                               leaf_unique_ptr&& child, tree_depth depth)
-    {
-        return std::make_unique<Derived>(std::move(source_node), std::move(child), depth);
     }
 
     [[nodiscard]] constexpr bool is_full() const noexcept
@@ -339,19 +311,6 @@ public:
     using inode_type = typename basic_inode_impl<Db>::inode_type;
 
 protected:
-    constexpr basic_inode(bitwise_key k1, bitwise_key k2, tree_depth depth) noexcept
-        : basic_inode_impl<Db>{NodeType, MinSize, k1, k2, depth}
-    {
-        assert(is_min_size());
-    }
-
-    constexpr basic_inode(unsigned key_prefix_len,
-                          const inode_type& key_prefix_source_node) noexcept
-        : basic_inode_impl<Db>{NodeType, MinSize, key_prefix_len, key_prefix_source_node}
-    {
-        assert(is_min_size());
-    }
-
     explicit constexpr basic_inode(const SmallerDerived& source_node) noexcept
         : basic_inode_impl<Db>(NodeType, MinSize, source_node)
     {
@@ -396,7 +355,8 @@ template <typename Db> class basic_inode_4 : public basic_inode_4_parent<Db>
 public:
     using parent_type::basic_inode;
 
-    constexpr basic_inode_4(std::unique_ptr<inode16_type> source_node, std::uint8_t child_to_delete,
+    constexpr basic_inode_4(unique_node_ptr<inode16_type, Db> source_node,
+                            std::uint8_t child_to_delete,
                             // cppcheck-suppress constParameter
                             Db& db_instance)
         : parent_type{*source_node}
@@ -491,20 +451,22 @@ public:
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
     }
 
-    constexpr auto leave_last_child(std::uint8_t child_to_delete, Db& db_instance) noexcept
+    constexpr node_unique_ptr leave_last_child(std::uint8_t child_to_delete,
+                                               Db& db_instance) noexcept
     {
-        /*assert(this->is_min_size());
+        assert(this->is_min_size());
         assert(child_to_delete == 0 || child_to_delete == 1);
         assert(this->type() == basic_inode_4::static_node_type);
 
         const auto child_to_delete_ptr = children[child_to_delete];
         const std::uint8_t child_to_leave = (child_to_delete == 0) ? 1 : 0;
         const auto child_to_leave_ptr = children[child_to_leave];
-        node_unique_ptr reclaim_on_scope_exit{child_to_delete_ptr, db_instance};
-        if (child_to_leave_ptr.type() != node_type::LEAF) {
-            child_to_leave_ptr.internal->prepend_key_prefix(*this, keys.byte_array[child_to_leave]);
-        }
-        return child_to_leave_ptr;*/
+        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(child_to_delete_ptr);
+
+        // Now we have to prepend inode_4's prefix to the last remaining node
+        child_to_leave_ptr->push_front(keys.byte_array[child_to_leave]);
+        child_to_leave_ptr->push_front(this->prefix());
+        return db_instance.make_unique_node_ptr(child_to_leave_ptr);
     }
 
     [[nodiscard, gnu::pure]] typename Db::const_iterator find_child(std::uint8_t key_byte) noexcept
@@ -547,6 +509,7 @@ public:
     constexpr void replace(std::uint8_t child_index, node_unique_ptr child) noexcept
     {
         children[child_index] = child.release();
+        this->reparent(children[child_index], child_index);
     }
 
     constexpr void delete_subtree(Db& db_instance) noexcept
@@ -575,12 +538,12 @@ protected:
         assert(key1 != key2);
         assert(this->children_count == 2);
 
-        this->reparent(child1);
-
         const std::uint8_t key1_i = key1 < key2 ? 0 : 1;
         const std::uint8_t key2_i = key1_i == 0 ? 1 : 0;
         this->keys.byte_array[key1_i] = key1;
         this->children[key1_i] = child1;
+        this->reparent(child1, key1_i);
+
         this->keys.byte_array[key2_i] = key2;
         this->children[key2_i] = child2.release();
         keys.byte_array[2] = std::uint8_t{0};
@@ -640,7 +603,7 @@ public:
         for (; i < insert_pos_index; ++i) {
             keys.byte_array[i] = source_node->keys.byte_array[i];
             children[i] = source_node->children[i];
-            this->reparent(children[i]);
+            this->reparent(children[i], i);
         }
 
         keys.byte_array[i] = static_cast<std::uint8_t>(key_byte);
@@ -650,11 +613,11 @@ public:
         for (; i <= inode4_type::capacity; ++i) {
             keys.byte_array[i] = source_node->keys.byte_array[i - 1];
             children[i] = source_node->children[i - 1];
-            this->reparent(children[i]);
+            this->reparent(children[i], i);
         }
     }
 
-    constexpr basic_inode_16(std::unique_ptr<inode48_type> source_node,
+    constexpr basic_inode_16(unique_node_ptr<inode48_type, Db> source_node,
                              std::uint8_t child_to_delete, Db& db_instance) noexcept
         : parent_type{*source_node}
     {
@@ -756,6 +719,7 @@ public:
     constexpr void replace(std::uint8_t child_index, node_unique_ptr child) noexcept
     {
         children[child_index] = child.release();
+        this->reparent(children[child_index], child_index);
     }
 
     constexpr void delete_subtree(Db& db_instance) noexcept
@@ -855,7 +819,7 @@ public:
         }
         for (i = 0; i < inode16_type::capacity; ++i) {
             this->children.pointer_array[i] = source_node_ptr->children[i];
-            this->reparent(this->children.pointer_array[i]);
+            this->reparent(this->children.pointer_array[i], i);
         }
 
         const auto key_byte = child_ptr->pop_front();
@@ -968,6 +932,7 @@ public:
     {
         const auto child_i = this->child_indices[static_cast<std::uint8_t>(key_byte)];
         children.pointer_array[child_i] = child.release();
+        this->reparent(children.pointer_array[child_i], key_byte);
     }
 
     constexpr void delete_subtree(Db& db_instance) noexcept
@@ -1072,7 +1037,7 @@ public:
                 children[i] = nullptr;
             } else {
                 children[i] = source_node->children.pointer_array[children_i];
-                this->reparent(children[i]);
+                this->reparent(children[i], i);
                 ++children_copied;
                 if (children_copied == inode48_type::capacity)
                     break;
@@ -1126,10 +1091,11 @@ public:
     constexpr void replace(std::uint8_t key_int_byte, node_unique_ptr child) noexcept
     {
         children[key_int_byte] = child.release();
+        this->reparent(children[key_int_byte], key_int_byte);
     }
 
     template <typename Function>
-    constexpr void for_each_child(Function func) noexcept(noexcept(func(0, nullptr)))
+    constexpr void for_each_child(Function func) const noexcept(noexcept(func(0, nullptr)))
     {
         const auto children_count = this->children_count;
         std::uint8_t actual_children_count = 0;
@@ -1144,12 +1110,6 @@ public:
         assert(actual_children_count == children_count);
     }
 
-    template <typename Function>
-    constexpr void for_each_child(Function func) const noexcept(noexcept(func(0, nullptr)))
-    {
-        const_cast<basic_inode_256*>(this)->for_each_child(func);
-    }
-
     constexpr void delete_subtree(Db& db_instance) noexcept
     {
         for_each_child([&db_instance](unsigned, node_ptr child) noexcept {
@@ -1160,7 +1120,7 @@ public:
     [[gnu::cold, gnu::noinline]] void dump(std::ostream& os) const
     {
         os << ", key bytes & children:\n";
-        for_each_child([&](unsigned i, node_ptr child) noexcept {
+        for_each_child([&](unsigned i, node_ptr child) {
             os << ' ';
             dump_byte(os, static_cast<std::uint8_t>(i));
             os << ' ';
