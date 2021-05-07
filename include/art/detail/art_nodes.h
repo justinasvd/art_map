@@ -87,8 +87,7 @@ public:
 
     [[gnu::cold, gnu::noinline]] void dump(std::ostream& os) const
     {
-        base_t::dump(os);
-        os << "# children = "
+        os << " parent = " << parent() << " #children = "
            << (children_count == 0 ? 256 : static_cast<unsigned>(children_count));
         switch (this->type()) {
         case node_type::I4:
@@ -213,24 +212,15 @@ public:
             os << '\n';
             return;
         }
+
         os << ", type = ";
         node->dump(os);
-        switch (node->type()) {
-        case node_type::I4:
-            return static_cast<const inode4_type*>(node)->dump(os);
-        case node_type::I16:
-            return static_cast<const inode16_type*>(node)->dump(os);
-        case node_type::I48:
-            return static_cast<const inode48_type*>(node)->dump(os);
-        case node_type::I256:
-            return static_cast<const inode256_type*>(node)->dump(os);
-            // LCOV_EXCL_START
-        case node_type::LEAF:
+        if (node->type() == node_type::LEAF) {
             os << ", value = " << static_cast<const leaf_type*>(node)->value() << '\n';
-            return;
+        } else {
+            // Print inode base info
+            static_cast<inode_type*>(node)->dump(os);
         }
-        CANNOT_HAPPEN();
-        // LCOV_EXCL_STOP
     }
 
 protected:
@@ -421,7 +411,7 @@ public:
             *children_itr++ = *source_children_itr++;
         }
 
-        node_unique_ptr reclaim_on_scope_exit{*source_children_itr, db_instance};
+        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(*source_children_itr);
 
         ++source_keys_itr;
         ++source_children_itr;
@@ -486,7 +476,7 @@ public:
         assert(child_index < children_count);
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
 
-        node_unique_ptr reclaim_on_scope_exit{children[child_index], db_instance};
+        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(children[child_index]);
 
         for (typename decltype(keys.byte_array)::size_type i = child_index;
              i < static_cast<unsigned>(this->children_count - 1); ++i) {
@@ -729,7 +719,7 @@ public:
         assert(child_index < children_count);
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
 
-        node_unique_ptr reclamator{children[child_index], db_instance};
+        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(children[child_index]);
 
         for (unsigned i = child_index + 1; i < children_count; ++i) {
             keys.byte_array[i - 1] = keys.byte_array[i];
@@ -884,8 +874,8 @@ public:
         : parent_type{*source_node}
     {
         auto* const __restrict__ source_node_ptr = source_node.get();
-        node_unique_ptr reclaim_on_scope_exit{source_node_ptr->children[child_to_delete],
-                                              db_instance};
+        auto reclaim_on_scope_exit =
+            db_instance.make_unique_node_ptr(source_node_ptr->children[child_to_delete]);
         source_node_ptr->children[child_to_delete] = nullptr;
 
         // std::memset(&child_indices[0], empty_child, 256);
@@ -1031,7 +1021,7 @@ private:
         assert(children_i != empty_child);
         assert(child_ptr != nullptr);
 
-        node_unique_ptr reclaim{child_ptr, db_instance};
+        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(child_ptr);
     }
 
     std::array<std::uint8_t, 256> child_indices;
@@ -1118,7 +1108,7 @@ public:
         assert(this->type() == basic_inode_256::static_node_type);
         assert(child_ptr != nullptr);
 
-        auto reclaim = db_instance.make_unique_node_ptr(child_ptr);
+        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(child_ptr);
 
         children[child_index] = nullptr;
         --this->children_count;

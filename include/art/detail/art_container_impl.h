@@ -277,11 +277,12 @@ template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_typ
 
         // Remove a leaf from its parent. In case of the no parent case,
         // we'll simply delete the root leaf
-        if (BOOST_UNLIKELY(pos->parent() == nullptr)) {
+        if (BOOST_UNLIKELY(pos.parent() == nullptr)) {
             assert(pos.node == tree.root);
             deallocate(static_cast<leaf_type*>(tree.root));
             tree.root = nullptr;
-        } else if (!inode_cast(pos)->remove(pos.position, *this)) {
+        } else if (!pos.parent()->remove(pos.position, *this)) {
+            assert(false);
             // const node_type parent_type = parent->type();
 
             // // The destination node is too small. Resize the destination node
