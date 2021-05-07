@@ -100,15 +100,17 @@ template <typename Header> struct art_node_base {
             os << "I256:";
             break;
         }
+        dump(os, prefix());
+    }
 
-        // Dump bitwise key prefix
-        const key_size_type len = prefix_length();
-        os << " key prefix len = " << len;
-        if (len) {
-            const auto key = header.key();
+    // Dump bitwise key prefix
+    static void dump(std::ostream& os, const std::pair<bitwise_key, key_size_type>& prefix)
+    {
+        os << " key prefix len = " << prefix.second;
+        if (prefix.second) {
             os << ", key prefix =";
-            for (key_size_type i = 0; i != len; ++i)
-                dump_byte(os, key[i]);
+            for (key_size_type i = 0; i != prefix.second; ++i)
+                dump_byte(os, prefix.first[i]);
         }
     }
 

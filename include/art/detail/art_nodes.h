@@ -114,8 +114,8 @@ public:
     // on failure to insert you won't have a leaf pointer anymore
     [[nodiscard]] constexpr bool add(leaf_unique_ptr& child) noexcept
     {
-        assert(child.get() != nullptr);
-        assert(child->prefix_length() >= 1);
+        assert(child != nullptr);
+        assert(child->prefix_length() != 0);
 
         switch (this->type()) {
         case node_type::I4:
@@ -126,6 +126,22 @@ public:
             return add_if_not_full<inode48_type>(child);
         case node_type::I256:
             return add_if_not_full<inode256_type>(child);
+        default:
+            CANNOT_HAPPEN();
+        }
+    }
+
+    [[nodiscard]] constexpr bool remove(std::uint8_t child_index, Db& db_instance) noexcept
+    {
+        switch (this->type()) {
+        case node_type::I4:
+            return remove_if_not_minsize<inode4_type>(child_index, db_instance);
+        case node_type::I16:
+            return remove_if_not_minsize<inode16_type>(child_index, db_instance);
+        case node_type::I48:
+            return remove_if_not_minsize<inode48_type>(child_index, db_instance);
+        case node_type::I256:
+            return remove_if_not_minsize<inode256_type>(child_index, db_instance);
         default:
             CANNOT_HAPPEN();
         }
@@ -145,30 +161,6 @@ public:
             break;
         case node_type::I256:
             static_cast<inode256_type*>(this)->replace(child_index, std::move(child));
-            break;
-            // LCOV_EXCL_START
-        case node_type::LEAF:
-            CANNOT_HAPPEN();
-            // LCOV_EXCL_STOP
-        }
-    }
-
-    constexpr void remove(std::uint8_t child_index, Db& db_instance) noexcept
-    {
-        assert(!is_min_size());
-
-        switch (this->type()) {
-        case node_type::I4:
-            static_cast<inode4_type*>(this)->remove(child_index, db_instance);
-            break;
-        case node_type::I16:
-            static_cast<inode16_type*>(this)->remove(child_index, db_instance);
-            break;
-        case node_type::I48:
-            static_cast<inode48_type*>(this)->remove(child_index, db_instance);
-            break;
-        case node_type::I256:
-            static_cast<inode256_type*>(this)->remove(child_index, db_instance);
             break;
             // LCOV_EXCL_START
         case node_type::LEAF:
@@ -206,25 +198,6 @@ public:
             return static_cast<inode48_type*>(this)->find_child(key_byte);
         case node_type::I256:
             return static_cast<inode256_type*>(this)->find_child(key_byte);
-            // LCOV_EXCL_START
-        case node_type::LEAF:
-            CANNOT_HAPPEN();
-        }
-        CANNOT_HAPPEN();
-        // LCOV_EXCL_STOP
-    }
-
-    [[nodiscard]] constexpr bool is_min_size() const noexcept
-    {
-        switch (this->type()) {
-        case node_type::I4:
-            return static_cast<const inode4_type*>(this)->is_min_size();
-        case node_type::I16:
-            return static_cast<const inode16_type*>(this)->is_min_size();
-        case node_type::I48:
-            return static_cast<const inode48_type*>(this)->is_min_size();
-        case node_type::I256:
-            return static_cast<const inode256_type*>(this)->is_min_size();
             // LCOV_EXCL_START
         case node_type::LEAF:
             CANNOT_HAPPEN();
@@ -285,8 +258,16 @@ private:
     template <typename Node>
     [[nodiscard]] constexpr bool add_if_not_full(leaf_unique_ptr& child) noexcept
     {
-        Node* dst = static_cast<Node*>(this);
+        Node* const dst = static_cast<Node*>(this);
         return !dst->is_full() ? (dst->add(std::move(child)), true) : false;
+    }
+
+    template <typename Node>
+    [[nodiscard]] constexpr bool remove_if_not_minsize(std::uint8_t child_index,
+                                                       Db& db_instance) noexcept
+    {
+        Node* const dst = static_cast<Node*>(this);
+        return !dst->is_min_size() ? (dst->remove(child_index, db_instance), true) : false;
     }
 
 protected:
@@ -453,7 +434,7 @@ public:
     constexpr void add(leaf_unique_ptr child) noexcept
     {
         assert(this->type() == basic_inode_4::static_node_type);
-        assert(child->prefix_length() >= 1);
+        assert(child->prefix_length() != 0);
         child->reparent(this);
 
         auto children_count = this->children_count;
@@ -644,7 +625,7 @@ public:
                              leaf_unique_ptr child) noexcept
         : parent_type(*source_node)
     {
-        assert(child->prefix_length() >= 1);
+        assert(child->prefix_length() != 0);
         child->reparent(this);
         const auto key_byte = child->pop_front();
 
@@ -707,7 +688,7 @@ public:
     constexpr void add(leaf_unique_ptr child) noexcept
     {
         assert(this->type() == basic_inode_16::static_node_type);
-        assert(child->prefix_length() >= 1);
+        assert(child->prefix_length() != 0);
         child->reparent(this);
 
         const auto key_byte = child->pop_front();
@@ -921,7 +902,7 @@ public:
     constexpr void add(leaf_unique_ptr child) noexcept
     {
         assert(this->type() == basic_inode_48::static_node_type);
-        assert(child->prefix_length() >= 1);
+        assert(child->prefix_length() != 0);
         child->reparent(this);
 
         const auto key_byte = child->pop_front();
@@ -1086,7 +1067,7 @@ public:
                               leaf_unique_ptr child) noexcept
         : parent_type(*source_node)
     {
-        assert(child->prefix_length() >= 1);
+        assert(child->prefix_length() != 0);
         child->reparent(this);
 
         unsigned children_copied = 0;
@@ -1118,7 +1099,7 @@ public:
     {
         assert(this->type() == basic_inode_256::static_node_type);
         assert(!this->is_full());
-        assert(child->prefix_length() >= 1);
+        assert(child->prefix_length() != 0);
         child->reparent(this);
 
         const auto key_byte = child->pop_front();
@@ -1134,7 +1115,7 @@ public:
         assert(this->type() == basic_inode_256::static_node_type);
         assert(child_ptr != nullptr);
 
-        node_unique_ptr reclaim{child_ptr, db_instance};
+        auto reclaim = db_instance.make_unique_node_ptr(child_ptr);
 
         children[child_index] = nullptr;
         --this->children_count;

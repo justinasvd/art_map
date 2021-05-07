@@ -11,14 +11,14 @@ namespace detail
 template <typename Node, typename Db> class node_deleter final
 {
 public:
-    explicit node_deleter(Db& db_) noexcept
-        : db{&db_}
+    explicit node_deleter(Db& db) noexcept
+        : db_{&db}
     {
     }
-    void operator()(Node* node) const noexcept { db->deallocate(node); }
+    void operator()(Node* node) const noexcept { db_->deallocate(node); }
 
 private:
-    Db* db;
+    Db* db_;
 };
 
 template <typename Node, typename Db>

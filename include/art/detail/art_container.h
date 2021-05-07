@@ -93,13 +93,13 @@ public:
     ~db() noexcept
     {
         if (!empty())
-            delete_subtree(data.root);
+            delete_subtree(tree.root);
     }
 
     // Allocator routines
     allocator_type get_allocator() const noexcept
     {
-        return *static_cast<const allocator_type*>(&data);
+        return *static_cast<const allocator_type*>(&tree);
     }
 
     // We are not using the given comparator, so the function here is a dummy one
@@ -116,7 +116,7 @@ public:
     const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
 
     size_type size() const noexcept { return leaf_count(); }
-    bool empty() const noexcept { return data.root == nullptr; }
+    bool empty() const noexcept { return tree.root == nullptr; }
 
     // Lookup routines
     iterator find(fast_key_type key) noexcept { return internal_find(key).mutable_self(); }
@@ -251,7 +251,7 @@ private:
 private:
     [[nodiscard]] allocator_type& allocator() noexcept
     {
-        return *static_cast<allocator_type*>(&data);
+        return *static_cast<allocator_type*>(&tree);
     }
 
     template <typename Node> constexpr size_type get_count() const noexcept
@@ -317,22 +317,25 @@ private:
     template <typename Source, typename Dest>
     void grow_node(const_iterator hint, node_ptr source_node, leaf_unique_ptr leaf);
 
+    template <typename Source, typename Dest>
+    void shrink_node(const_iterator pos, node_ptr source_node) noexcept;
+
 private:
     // A helper struct to get the empty base class optimization for 0 size allocators.
     // In C++20 parlance that would be [[no_unique_address]] for the allocator.
     struct compress_empty_base : public allocator_type {
         node_ptr root{nullptr};
-    } data;
+    } tree;
 
     size_type current_memory_use_{0};
 
     template <typename T> struct counter {
-        size_type instances{0};
+        size_type instances;
     };
 
-    using node_stats = std::tuple<counter<leaf_type>, counter<inode_4>, counter<inode_16>,
-                                  counter<inode_48>, counter<inode_256>>;
-    node_stats count_;
+    using node_stats_type = std::tuple<counter<leaf_type>, counter<inode_4>, counter<inode_16>,
+                                       counter<inode_48>, counter<inode_256>>;
+    node_stats_type count_{};
 };
 
 } // namespace detail
