@@ -19,27 +19,18 @@ template <typename Header> struct art_node_base {
     using bitwise_key = typename Header::bitwise_key;
     using key_size_type = typename bitwise_key::size_type;
 
-    constexpr art_node_base(node_type type, bitwise_key key, key_size_type key_size,
-                            art_node_base* parent) noexcept
-        : parent_(parent)
-        , header(type, key, key_size)
+    constexpr art_node_base(node_type type, bitwise_key key, key_size_type key_size) noexcept
+        : header(type, key, key_size)
     {
     }
 
-    constexpr art_node_base(node_type type, const std::pair<bitwise_key, key_size_type>& prefix,
-                            art_node_base* parent) noexcept
-        : art_node_base(type, prefix.first, prefix.second, parent)
+    constexpr art_node_base(node_type type,
+                            const std::pair<bitwise_key, key_size_type>& prefix) noexcept
+        : art_node_base(type, prefix.first, prefix.second)
     {
     }
 
     [[nodiscard]] node_type type() const noexcept { return header.type(); }
-
-    [[nodiscard]] art_node_base* parent() const noexcept { return parent_; }
-    constexpr void reparent(art_node_base* parent) noexcept
-    {
-        assert(parent && parent->type() != node_type::LEAF);
-        parent_ = parent;
-    }
 
     [[nodiscard]] constexpr std::pair<bitwise_key, key_size_type> prefix() const noexcept
     {
@@ -115,7 +106,6 @@ template <typename Header> struct art_node_base {
     }
 
 private:
-    art_node_base* parent_;
     Header header;
 };
 

@@ -71,8 +71,8 @@ public:
     using difference_type = typename Traits::difference_type;
     using key_compare = typename Traits::key_compare;
     using allocator_type = typename Traits::allocator_type;
-    using iterator = tree_iterator<Traits, node_ptr>;
-    using const_iterator = tree_iterator<const Traits, node_ptr>;
+    using iterator = tree_iterator<Traits, node_ptr, inode*>;
+    using const_iterator = tree_iterator<const Traits, node_ptr, inode*>;
     using reverse_iterator = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 

@@ -12,7 +12,7 @@ namespace detail
 // Forward declaration of the container
 template <typename Traits> class db;
 
-template <typename Traits, typename NodePtr> struct tree_iterator {
+template <typename Traits, typename NodePtr, typename ParentPtr> struct tree_iterator {
     using key_type = typename Traits::key_type;
     using fast_key_type = typename Traits::fast_key_type;
 
@@ -31,6 +31,7 @@ template <typename Traits, typename NodePtr> struct tree_iterator {
 
     constexpr tree_iterator() noexcept
         : node(nullptr)
+        , parent_(nullptr)
         , position(-1)
     {
     }
@@ -38,8 +39,9 @@ template <typename Traits, typename NodePtr> struct tree_iterator {
     // Default copy c-tor is fine
     tree_iterator(const tree_iterator& rhs) = default;
 
-    constexpr tree_iterator(NodePtr n, int p) noexcept
+    constexpr tree_iterator(NodePtr n, int p, ParentPtr parent = nullptr) noexcept
         : node(n)
+        , parent_(parent)
         , position(p)
     {
     }
@@ -80,8 +82,8 @@ private:
     using bitwise_key = typename Traits::bitwise_key;
     using key_size_type = typename bitwise_key::size_type;
 
-    using mutable_tree_iterator = tree_iterator<traits_type, NodePtr>;
-    using const_tree_iterator = tree_iterator<const traits_type, NodePtr>;
+    using mutable_tree_iterator = tree_iterator<traits_type, NodePtr, ParentPtr>;
+    using const_tree_iterator = tree_iterator<const traits_type, NodePtr, ParentPtr>;
 
     [[nodiscard]] mutable_tree_iterator mutable_self() const noexcept
     {
@@ -91,6 +93,8 @@ private:
     explicit operator bool() const noexcept { return node != nullptr; }
 
     [[nodiscard]] node_type type() const noexcept { return node->type(); }
+
+    ParentPtr parent() const noexcept { return parent_; }
 
     [[nodiscard]] bool match(bitwise_key key) const noexcept
     {
@@ -121,11 +125,13 @@ private:
 private:
     // The node in the tree the iterator is pointing at.
     NodePtr node;
+    // Parent of the current node. Also, the position below is within this parent.
+    ParentPtr parent_;
     // The position within the node of the tree the iterator is pointing at.
     int position;
 };
 
-// Enable comparisons between differently cv-qualified nodes
+/*// Enable comparisons between differently cv-qualified nodes
 template <typename Traits, typename U, typename V,
           typename = typename std::is_same<std::remove_cv_t<U>, std::remove_cv_t<V>>::type>
 inline bool operator==(const tree_iterator<Traits, U>& lhs,
@@ -138,7 +144,7 @@ inline bool operator!=(const tree_iterator<Traits, U>& lhs,
                        const tree_iterator<Traits, V>& rhs) noexcept
 {
     return !(lhs == rhs);
-}
+}*/
 
 } // namespace detail
 } // namespace art

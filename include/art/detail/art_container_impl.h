@@ -131,10 +131,11 @@ template <typename P>
 template <typename NodePtr>
 inline void db<P>::release_to_parent(const_iterator hint, NodePtr child) noexcept
 {
-    if (BOOST_LIKELY(child->parent() != nullptr)) {
-        const auto parent = inode_cast(child->parent());
+    if (BOOST_LIKELY(hint.parent() != nullptr)) {
+        const auto parent = hint.parent();
+        assert(parent->type() != node_type::LEAF);
         // Downcast the child pointer. It doesn't really matter here that the
-        // "generic" deleter is slow, because we won't call that deleter.
+        // "generic" deleter is slow, because ideally we won't have to call that deleter.
         parent->replace(hint.position, make_unique_node_ptr<node_base>(child.release()));
     } else {
         tree.root = child.release();
@@ -145,7 +146,7 @@ template <typename P>
 inline void db<P>::create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix,
                                   node_ptr pdst, leaf_unique_ptr leaf)
 {
-    auto new_node = make_node_ptr<inode_4>(prefix, pdst->parent());
+    auto new_node = make_node_ptr<inode_4>(prefix, hint.parent());
     new_node->add_two_to_empty(pdst, std::move(leaf));
     release_to_parent(hint, std::move(new_node));
 }
@@ -200,11 +201,15 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
         return leaf_iter;
     }
 
-    if (key.second > pdst->prefix_length() &&
-        pdst->shared_prefix_length(key.first) < pdst->prefix_length()) {
-        // Needs to split the key prefix
-        create_inode_4(hint, pdst->shared_prefix(key.first), pdst, std::move(leaf_ptr));
-        return leaf_iter;
+    if (key.second > pdst->prefix_length()) {
+        // Directly compute shared prefix. This eliminates computing shared
+        // prefix length twice.
+        const auto shared_prefix = pdst->shared_prefix(key.first);
+        if (shared_prefix.second < pdst->prefix_length()) {
+            // Needs to split the key prefix
+            create_inode_4(hint, shared_prefix, pdst, std::move(leaf_ptr));
+            return leaf_iter;
+        }
     }
 
     if (!inode_cast(pdst)->add(leaf_ptr)) {

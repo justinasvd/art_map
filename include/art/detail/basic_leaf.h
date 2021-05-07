@@ -21,9 +21,8 @@ struct basic_leaf final : public art_node_base<Header> {
     using key_size_type = typename bitwise_key::size_type;
     using parent_type = art_node_base<Header>;
 
-    constexpr basic_leaf(bitwise_key key, key_size_type key_size,
-                         parent_type* parent = nullptr) noexcept
-        : parent_type(node_type::LEAF, key, key_size, parent)
+    constexpr basic_leaf(bitwise_key key, key_size_type key_size) noexcept
+        : parent_type(node_type::LEAF, key, key_size)
     {
     }
 
@@ -60,9 +59,8 @@ struct basic_leaf<Header, std::integral_constant<T, V>, Alloc> final
     using key_size_type = typename bitwise_key::size_type;
     using parent_type = art_node_base<Header>;
 
-    constexpr basic_leaf(bitwise_key key, key_size_type key_size,
-                         parent_type* parent = nullptr) noexcept
-        : parent_type(node_type::LEAF, key, key_size, parent)
+    constexpr basic_leaf(bitwise_key key, key_size_type key_size) noexcept
+        : parent_type(node_type::LEAF, key, key_size)
     {
     }
 
