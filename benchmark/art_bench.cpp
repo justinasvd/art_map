@@ -57,21 +57,23 @@ template <typename C> inline void fwditer(benchmark::State& state)
 // Benchmark insertion of values into a container.
 template <typename C> inline void insert(benchmark::State& state)
 {
+    using value_t = test::remove_key_const_t<typename C::value_type>;
+
     C container;
-    const auto values = fill_container(container);
+
+    const auto values = test::generate_values<value_t, max_values>(seed);
 
     auto it = values.begin();
     for (auto _ : state) {
-        // Remove
-        state.PauseTiming();
-        container.erase(test::key_of_value(*it));
-
-        // Reinsert
-        state.ResumeTiming();
         container.insert(*it);
 
-        if (++it == values.end())
+        // Clear the container on wrap
+        if (++it == values.end()) {
+            state.PauseTiming();
             it = values.begin();
+            container.clear();
+            state.ResumeTiming();
+        }
     }
 }
 
