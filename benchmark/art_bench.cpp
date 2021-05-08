@@ -8,6 +8,9 @@
 #include "art/map.h"
 #include "art/set.h"
 
+#include "btree/btree_map.h"
+#include "btree/btree_set.h"
+
 #include "test/test_utils.hpp"
 
 // The number of values to use for benchmarks
@@ -65,7 +68,8 @@ template <typename C> inline void insert(benchmark::State& state)
 
     auto it = values.begin();
     for (auto _ : state) {
-        container.insert(*it);
+        auto r = container.insert(*it);
+        do_not_optimize(&r);
 
         // Clear the container on wrap
         if (++it == values.end()) {
@@ -86,7 +90,7 @@ template <typename C> void lookup(benchmark::State& state)
     auto it = values.begin();
     for (auto _ : state) {
         auto r = container.find(test::key_of_value(*it));
-        do_not_optimize(*r);
+        do_not_optimize(&r);
         if (++it == values.end())
             it = values.begin();
     }
@@ -114,7 +118,7 @@ template <typename C> void full_lookup(benchmark::State& state)
     auto it = values.begin();
     for (auto _ : state) {
         auto r = container.find(test::key_of_value(*it));
-        do_not_optimize(*r);
+        do_not_optimize(&r);
         if (++it == values.end())
             it = values.begin();
     }
@@ -273,20 +277,21 @@ template <typename C> inline void fifo(benchmark::State& state)
     GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(std::Container, __VA_ARGS__));                  \
     GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(std::multi##Container, __VA_ARGS__));           \
     GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(art::Container, __VA_ARGS__));                  \
-    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(art::multi##Container, __VA_ARGS__))            \
+    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(art::multi##Container, __VA_ARGS__));           \
+    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(btree::btree_##Container, __VA_ARGS__));        \
+    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(btree::btree_multi##Container, __VA_ARGS__))    \
     /**/
 
 #define GENERATE_BENCHMARKS(Container, ...)                                                        \
+    /*GENERATE_BENCH_SET(fwditer, Container, __VA_ARGS__);                                         \
+    GENERATE_BENCH_SET(lookup, Container, __VA_ARGS__);                                            \
+    GENERATE_BENCH_SET(full_lookup, Container, __VA_ARGS__);*/                                     \
     GENERATE_BENCH_SET(insert, Container, __VA_ARGS__);                                            \
-/*    GENERATE_BENCH_SET(fwditer, Container, __VA_ARGS__);                                         \
-GENERATE_BENCH_SET(lookup, Container, __VA_ARGS__);                                                \
-GENERATE_BENCH_SET(full_lookup, Container, __VA_ARGS__);                                           \
-GENERATE_BENCH_SET(insert, Container, __VA_ARGS__);                                                \
-GENERATE_BENCH_SET(erase, Container, __VA_ARGS__);                                                 \
-GENERATE_BENCH_SET(queue_addrem, Container, __VA_ARGS__);                                          \
-GENERATE_BENCH_SET(mixed_addrem, Container, __VA_ARGS__);                                          \
-GENERATE_BENCH_SET(fifo, Container, __VA_ARGS__)                                               \*/
-/**/
+    /*GENERATE_BENCH_SET(erase, Container, __VA_ARGS__);                                           \
+    GENERATE_BENCH_SET(queue_addrem, Container, __VA_ARGS__);                                      \
+    GENERATE_BENCH_SET(mixed_addrem, Container, __VA_ARGS__);                                      \
+    GENERATE_BENCH_SET(fifo, Container, __VA_ARGS__)*/                                             \
+    /**/
 
 GENERATE_BENCHMARKS(set<int>);
 // GENERATE_BENCHMARKS(map<std::uint64_t, int>);
