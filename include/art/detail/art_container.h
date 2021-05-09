@@ -132,6 +132,14 @@ public:
     template <class K> iterator upper_bound(const K& key);
     template <class K> const_iterator upper_bound(const K& key) const;
 
+    // Since C++20
+    bool contains(fast_key_type key) const noexcept
+    {
+        auto bitk = make_bitwise_key_prefix(key);
+        return internal_locate(bitk).match(bitk.first);
+    }
+    template <class K> bool contains(const K& key) const;
+
     std::pair<iterator, iterator> equal_range(fast_key_type key)
     {
         return std::make_pair(lower_bound(key), upper_bound(key));
@@ -179,6 +187,12 @@ public:
     template <typename Arg> iterator insert(iterator hint, Arg&& value)
     {
         return emplace_hint_key_args(hint, Traits::key(value), std::move(value));
+    }
+
+    template <typename InputIterator> void insert(InputIterator first, InputIterator last)
+    {
+        for (; first != last; ++first)
+            insert(*first);
     }
 
     size_type erase(fast_key_type key);

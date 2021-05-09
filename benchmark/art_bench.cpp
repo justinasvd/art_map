@@ -19,15 +19,16 @@ static constexpr unsigned int max_values = 1000000;
 // Seed for the sample generators
 static constexpr unsigned int seed = 123456789;
 
-template <typename C> inline auto fill_container(C& c)
+template <typename C> inline auto bench_dataset()
 {
     using value_t = test::remove_key_const_t<typename C::value_type>;
+    return test::generate_values<value_t, max_values>(seed);
+}
 
-    auto values = test::generate_values<value_t, max_values>(seed);
-    for (const value_t& v : values) {
-        c.insert(v);
-    }
-
+template <typename C> inline auto fill_container(C& c)
+{
+    auto values = bench_dataset<C>();
+    c.insert(values.begin(), values.end());
     return values;
 }
 
@@ -39,12 +40,10 @@ template <typename T> inline void do_not_optimize(const T& value)
 // Iteration (forward) through the tree
 template <typename C> inline void fwditer(benchmark::State& state)
 {
-    using value_t = test::remove_key_const_t<typename C::value_type>;
-
     C container;
 
     // Fill the container
-    for (value_t& v : test::generate_values<value_t, max_values>(seed)) {
+    for (auto& v : bench_dataset<C>()) {
         container.insert(std::move(v));
     }
 
@@ -60,11 +59,9 @@ template <typename C> inline void fwditer(benchmark::State& state)
 // Benchmark insertion of values into a container.
 template <typename C> inline void insert(benchmark::State& state)
 {
-    using value_t = test::remove_key_const_t<typename C::value_type>;
-
     C container;
 
-    const auto values = test::generate_values<value_t, max_values>(seed);
+    const auto values = bench_dataset<C>();
 
     auto it = values.begin();
     for (auto _ : state) {
@@ -133,15 +130,16 @@ template <typename C> inline void erase(benchmark::State& state)
     auto it = values.begin();
     for (auto _ : state) {
         // Remove
-        state.ResumeTiming();
-        auto pos = container.erase(test::key_of_value(*it));
+        std::size_t count = container.erase(test::key_of_value(*it));
+        do_not_optimize(count);
 
-        // Reinsert
-        state.PauseTiming();
-        container.insert(pos, *it);
-
-        if (++it == values.end())
+        // Reinsert values
+        if (++it == values.end()) {
+            state.PauseTiming();
             it = values.begin();
+            container.insert(values.begin(), values.end());
+            state.ResumeTiming();
+        }
     }
 }
 
@@ -283,9 +281,9 @@ template <typename C> inline void fifo(benchmark::State& state)
     /**/
 
 #define GENERATE_BENCHMARKS(Container, ...)                                                        \
-    /*GENERATE_BENCH_SET(fwditer, Container, __VA_ARGS__);                                         \
+    /*GENERATE_BENCH_SET(fwditer, Container, __VA_ARGS__);*/                                       \
     GENERATE_BENCH_SET(lookup, Container, __VA_ARGS__);                                            \
-    GENERATE_BENCH_SET(full_lookup, Container, __VA_ARGS__);*/                                     \
+    GENERATE_BENCH_SET(full_lookup, Container, __VA_ARGS__);                                       \
     GENERATE_BENCH_SET(insert, Container, __VA_ARGS__);                                            \
     /*GENERATE_BENCH_SET(erase, Container, __VA_ARGS__);                                           \
     GENERATE_BENCH_SET(queue_addrem, Container, __VA_ARGS__);                                      \

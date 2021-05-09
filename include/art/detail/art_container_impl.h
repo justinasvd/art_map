@@ -51,7 +51,7 @@ inline typename db<P>::const_iterator db<P>::internal_find(fast_key_type key) co
 {
     auto bitk = make_bitwise_key_prefix(key);
     auto pos = internal_locate(bitk);
-    return pos.match(bitk.first) ? pos : end();
+    return pos.match(bitk.first) ? pos : const_iterator();
 }
 
 template <typename P>

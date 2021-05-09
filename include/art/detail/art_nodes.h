@@ -1000,7 +1000,6 @@ private:
         // NOLINTNEXTLINE(modernize-avoid-c-arrays)
         __m128i pointer_vector[basic_inode_48::capacity / 2]; // NOLINT(runtime/arrays)
 #endif
-        children_union() {}
     } children;
 
     friend basic_inode_16<Db>;
