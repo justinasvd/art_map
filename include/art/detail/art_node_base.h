@@ -20,7 +20,8 @@ template <typename Header> struct art_node_base {
     using key_size_type = typename bitwise_key::size_type;
 
     constexpr art_node_base(node_type type, bitwise_key key, key_size_type key_size) noexcept
-        : header(type, key, key_size)
+        : type_(type)
+        , header(key, key_size)
     {
     }
 
@@ -30,7 +31,7 @@ template <typename Header> struct art_node_base {
     {
     }
 
-    [[nodiscard]] node_type type() const noexcept { return header.type(); }
+    [[nodiscard]] node_type type() const noexcept { return type_; }
 
     [[nodiscard]] constexpr std::pair<bitwise_key, key_size_type> prefix() const noexcept
     {
@@ -111,6 +112,7 @@ template <typename Header> struct art_node_base {
     }
 
 private:
+    node_type type_;
     Header header;
 };
 

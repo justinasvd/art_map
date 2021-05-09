@@ -1,9 +1,7 @@
 #ifndef ART_DETAIL_BASIC_HEADER_HEADER_INCLUDED
 #define ART_DETAIL_BASIC_HEADER_HEADER_INCLUDED
 
-#include "art_node_base.h"
-
-#include <type_traits>
+#include <cassert>
 
 namespace art
 {
@@ -15,14 +13,11 @@ template <typename BitwiseKey> struct basic_header final {
     using bitwise_key = BitwiseKey;
     using key_size_type = typename BitwiseKey::size_type;
 
-    constexpr basic_header(node_type type, bitwise_key key, key_size_type key_size) noexcept
-        : type_(type)
+    constexpr basic_header(bitwise_key key, key_size_type key_size) noexcept
+        : key_(key)
         , size_(key_size)
-        , key_(key)
     {
     }
-
-    [[nodiscard]] constexpr node_type type() const noexcept { return type_; }
 
     [[nodiscard]] constexpr bitwise_key key() const noexcept { return key_; }
     [[nodiscard]] constexpr std::uint8_t front() const noexcept { return key_.front(); }
@@ -54,9 +49,8 @@ template <typename BitwiseKey> struct basic_header final {
     }
 
 private:
-    node_type type_;
-    key_size_type size_;
     bitwise_key key_;
+    key_size_type size_;
 };
 
 } // namespace detail
