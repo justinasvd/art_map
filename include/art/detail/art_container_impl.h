@@ -136,8 +136,10 @@ inline void db<P>::release_to_parent(const_iterator hint, NodePtr child) noexcep
         assert(parent->type() != node_type::LEAF);
         // Downcast the child pointer. It doesn't really matter here that the
         // "generic" deleter is slow, because ideally we won't have to call that deleter.
-        parent->replace(hint.position, make_unique_node_ptr<node_base>(child.release()));
+        parent->replace(hint.pos_in_parent, make_unique_node_ptr<node_base>(child.release()));
     } else {
+        if (child->type() != node_type::LEAF)
+            inode_cast(child.get())->clear_parent();
         tree.root = child.release();
     }
 }
@@ -261,8 +263,10 @@ template <typename Source, typename Dest>
 inline void db<P>::shrink_node(const_iterator pos) noexcept
 {
     auto src = make_unique_node_ptr(static_cast<Source*>(pos.parent()));
-    auto rem = make_node_ptr<Dest>(std::move(src), pos.position, *this);
-    release_to_parent(pos.parent()->iterator(), std::move(rem));
+    // Fetch the self-position iterator before we discard the source node
+    auto selfiter = src->selfpos_iterator();
+    auto rem = make_node_ptr<Dest>(std::move(src), pos.pos_in_parent);
+    release_to_parent(selfiter, std::move(rem));
 }
 
 template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_type key)
@@ -275,24 +279,26 @@ template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_typ
     if (pos.match(bitk.first)) {
         assert(pos);
 
-        // Remove a leaf from its parent. In case of the no parent case,
-        // we'll simply delete the root leaf
-        const auto parent = pos.parent();
+        // We'll reclaim the leaf on scope exit
+        auto reclaim_on_scope_exit = make_unique_node_ptr(static_cast<leaf_type*>(pos.node));
 
-        if (BOOST_UNLIKELY(parent == nullptr)) {
+        // Also remove a leaf from its parent. In case of the no parent case,
+        // we'll simply delete the root leaf
+        const auto leaf_parent = pos.parent();
+
+        if (BOOST_UNLIKELY(leaf_parent == nullptr)) {
             assert(pos.node == tree.root);
-            deallocate(static_cast<leaf_type*>(tree.root));
             tree.root = nullptr;
-        } else if (!parent->remove(pos.position, *this)) {
-            const node_type parent_type = parent->type();
+        } else if (!leaf_parent->remove(pos.pos_in_parent)) {
+            const node_type parent_type = leaf_parent->type();
 
             // We have failed to remove the value from the node because
             // the node would become undersized after the operation. We have
             // to shrink the node and remove the value at the same token.
             if (parent_type == node_type::I4) {
-                auto src = make_unique_node_ptr(static_cast<inode_4*>(parent));
-                auto rem = src->leave_last_child(pos.position, *this);
-                release_to_parent(parent->iterator(), std::move(rem));
+                auto src = make_unique_node_ptr(static_cast<inode_4*>(leaf_parent));
+                auto rem = src->leave_last_child(pos.pos_in_parent, *this);
+                release_to_parent(leaf_parent->selfpos_iterator(), std::move(rem));
             } else if (parent_type == node_type::I16) {
                 shrink_node<inode_16, inode_4>(pos);
             } else if (parent_type == node_type::I48) {

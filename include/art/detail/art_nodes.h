@@ -110,17 +110,17 @@ public:
         }
     }
 
-    [[nodiscard]] constexpr bool remove(std::uint8_t child_index, Db& db_instance) noexcept
+    [[nodiscard]] constexpr bool remove(std::uint8_t child_index) noexcept
     {
         switch (this->type()) {
         case node_type::I4:
-            return remove_if_not_minsize<inode4_type>(child_index, db_instance);
+            return remove_if_not_minsize<inode4_type>(child_index);
         case node_type::I16:
-            return remove_if_not_minsize<inode16_type>(child_index, db_instance);
+            return remove_if_not_minsize<inode16_type>(child_index);
         case node_type::I48:
-            return remove_if_not_minsize<inode48_type>(child_index, db_instance);
+            return remove_if_not_minsize<inode48_type>(child_index);
         case node_type::I256:
-            return remove_if_not_minsize<inode256_type>(child_index, db_instance);
+            return remove_if_not_minsize<inode256_type>(child_index);
         default:
             CANNOT_HAPPEN();
         }
@@ -203,13 +203,16 @@ public:
         }
     }
 
-    typename Db::const_iterator iterator() const noexcept
+    [[nodiscard]] typename Db::const_iterator selfpos_iterator() noexcept
     {
-        return typename Db::const_iterator(parent_.first, parent_.second,
-                                           parent() ? parent_.first->parent() : nullptr);
+        return typename Db::const_iterator(this, pos_in_parent(), parent());
     }
 
+    void clear_parent() noexcept { parent_ = parent_info{}; }
+
 protected:
+    using parent_info = std::pair<inode_type*, std::uint8_t>;
+
     constexpr basic_inode_impl(node_type type, unsigned min_size, bitwise_key key,
                                key_size_type key_size) noexcept
         : base_t(assert_non_leaf(type), key, key_size)
@@ -226,12 +229,13 @@ protected:
     {
     }
 
-    inode_type* parent() const noexcept { return parent_.first; }
+    constexpr inode_type* parent() const noexcept { return parent_.first; }
+    constexpr std::uint8_t pos_in_parent() const noexcept { return parent_.second; }
 
     void reparent(node_ptr node, std::uint8_t index) noexcept
     {
         if (node->type() != node_type::LEAF) {
-            static_cast<inode_type*>(node)->parent_ = std::make_pair(this, index);
+            static_cast<inode_type*>(node)->parent_ = parent_info(this, index);
         }
     }
 
@@ -250,15 +254,16 @@ private:
     }
 
     template <typename Node>
-    [[nodiscard]] constexpr bool remove_if_not_minsize(std::uint8_t child_index,
-                                                       Db& db_instance) noexcept
+    [[nodiscard]] constexpr bool remove_if_not_minsize(std::uint8_t child_index) noexcept
     {
         Node* const dst = static_cast<Node*>(this);
-        return !dst->is_min_size() ? (dst->remove(child_index, db_instance), true) : false;
+        return !dst->is_min_size() ? (dst->remove(child_index), true) : false;
     }
 
+private:
+    parent_info parent_;
+
 protected:
-    std::pair<inode_type*, std::uint8_t> parent_;
     std::uint8_t children_count;
 };
 
@@ -356,9 +361,7 @@ public:
     using parent_type::basic_inode;
 
     constexpr basic_inode_4(unique_node_ptr<inode16_type, Db> source_node,
-                            std::uint8_t child_to_delete,
-                            // cppcheck-suppress constParameter
-                            Db& db_instance)
+                            std::uint8_t child_to_delete)
         : parent_type{*source_node}
     {
         const auto* source_keys_itr = source_node->keys.byte_array.cbegin();
@@ -370,8 +373,6 @@ public:
             *keys_itr++ = *source_keys_itr++;
             *children_itr++ = *source_children_itr++;
         }
-
-        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(*source_children_itr);
 
         ++source_keys_itr;
         ++source_children_itr;
@@ -427,7 +428,7 @@ public:
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
     }
 
-    constexpr void remove(std::uint8_t child_index, Db& db_instance) noexcept
+    constexpr void remove(std::uint8_t child_index) noexcept
     {
         assert(this->type() == basic_inode_4::static_node_type);
 
@@ -435,8 +436,6 @@ public:
 
         assert(child_index < children_count);
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
-
-        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(children[child_index]);
 
         for (typename decltype(keys.byte_array)::size_type i = child_index;
              i < static_cast<unsigned>(this->children_count - 1); ++i) {
@@ -458,10 +457,8 @@ public:
         assert(child_to_delete == 0 || child_to_delete == 1);
         assert(this->type() == basic_inode_4::static_node_type);
 
-        const auto child_to_delete_ptr = children[child_to_delete];
         const std::uint8_t child_to_leave = (child_to_delete == 0) ? 1 : 0;
         const auto child_to_leave_ptr = children[child_to_leave];
-        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(child_to_delete_ptr);
 
         // Now we have to prepend inode_4's prefix to the last remaining node
         child_to_leave_ptr->push_front(keys.byte_array[child_to_leave]);
@@ -618,10 +615,10 @@ public:
     }
 
     constexpr basic_inode_16(unique_node_ptr<inode48_type, Db> source_node,
-                             std::uint8_t child_to_delete, Db& db_instance) noexcept
+                             std::uint8_t child_to_delete) noexcept
         : parent_type{*source_node}
     {
-        source_node->remove_child_pointer(child_to_delete, db_instance);
+        source_node->verify_remove_preconditions(child_to_delete);
         source_node->child_indices[child_to_delete] = empty_child;
 
         // TODO(laurynas): consider AVX512 gather?
@@ -675,14 +672,12 @@ public:
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
     }
 
-    constexpr void remove(std::uint8_t child_index, Db& db_instance) noexcept
+    constexpr void remove(std::uint8_t child_index) noexcept
     {
         assert(this->type() == basic_inode_16::static_node_type);
         auto children_count = this->children_count;
         assert(child_index < children_count);
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
-
-        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(children[child_index]);
 
         for (unsigned i = child_index + 1; i < children_count; ++i) {
             keys.byte_array[i - 1] = keys.byte_array[i];
@@ -832,14 +827,10 @@ public:
     }
 
     constexpr basic_inode_48(unique_node_ptr<inode256_type, Db> source_node,
-                             std::uint8_t child_to_delete,
-                             // cppcheck-suppress constParameter
-                             Db& db_instance) noexcept
+                             std::uint8_t child_to_delete) noexcept
         : parent_type{*source_node}
     {
         auto* const __restrict__ source_node_ptr = source_node.get();
-        auto reclaim_on_scope_exit =
-            db_instance.make_unique_node_ptr(source_node_ptr->children[child_to_delete]);
         source_node_ptr->children[child_to_delete] = nullptr;
 
         // std::memset(&child_indices[0], empty_child, 256);
@@ -906,11 +897,11 @@ public:
         ++this->children_count;
     }
 
-    constexpr void remove(std::uint8_t child_index, Db& db_instance) noexcept
+    constexpr void remove(std::uint8_t child_index) noexcept
     {
         assert(this->type() == basic_inode_48::static_node_type);
 
-        remove_child_pointer(child_index, db_instance);
+        verify_remove_preconditions(child_index);
         children.pointer_array[child_indices[child_index]] = nullptr;
         child_indices[child_index] = empty_child;
         --this->children_count;
@@ -972,21 +963,10 @@ public:
     }
 
 private:
-    constexpr void remove_child_pointer(std::uint8_t child_index, Db& db_instance) noexcept
+    constexpr void verify_remove_preconditions(std::uint8_t child_index) noexcept
     {
-        direct_remove_child_pointer(child_indices[child_index], db_instance);
-    }
-
-    constexpr void direct_remove_child_pointer(std::uint8_t children_i,
-                                               // cppcheck-suppress constParameter
-                                               Db& db_instance) noexcept
-    {
-        const auto child_ptr = children.pointer_array[children_i];
-
-        assert(children_i != empty_child);
-        assert(child_ptr != nullptr);
-
-        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(child_ptr);
+        assert(child_indices[child_index] != empty_child);
+        assert(children.pointer_array[child_indices[child_index]] != nullptr);
     }
 
     std::array<std::uint8_t, 256> child_indices;
@@ -1065,15 +1045,11 @@ public:
         ++this->children_count;
     }
 
-    constexpr void remove(std::uint8_t child_index, Db& db_instance) noexcept
+    constexpr void remove(std::uint8_t child_index) noexcept
     {
-        const auto child_ptr = children[child_index];
-
         assert(this->type() == basic_inode_256::static_node_type);
-        assert(child_ptr != nullptr);
 
-        auto reclaim_on_scope_exit = db_instance.make_unique_node_ptr(child_ptr);
-
+        assert(children[child_index] != nullptr);
         children[child_index] = nullptr;
         --this->children_count;
     }

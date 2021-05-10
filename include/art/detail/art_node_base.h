@@ -103,7 +103,7 @@ template <typename Header> struct art_node_base {
     // Dump bitwise key prefix
     static void dump(std::ostream& os, const std::pair<bitwise_key, key_size_type>& prefix)
     {
-        os << " key prefix len = " << prefix.second;
+        os << " key prefix len = " << static_cast<std::size_t>(prefix.second);
         if (prefix.second) {
             os << ", key prefix =";
             for (key_size_type i = 0; i != prefix.second; ++i)

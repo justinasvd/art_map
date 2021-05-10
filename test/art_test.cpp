@@ -1,5 +1,7 @@
 #include "art/map.h"
 
+#include <iostream>
+
 int main()
 {
     art::map<std::uint64_t, std::uint64_t> db;
@@ -11,12 +13,19 @@ int main()
 
     db.insert(std::make_pair(181819, 3));
 
-    db.insert(std::make_pair(1820, 4));
-    db.insert(std::make_pair(1821, 5));
-
-    db.insert(std::make_pair(1822, 6));
+    for (int i = 0; i < 300; ++i)
+        db.insert(std::make_pair(1820 + i, 4 + i));
 
     db.dump(std::cout);
+
+    std::cout << "After erase:\n";
+    for (int i = 0; i < 296; ++i)
+        db.erase(1820 + i);
+
+    db.erase(181819);
+
+    db.dump(std::cout);
+
     db.clear();
 
     return 0;

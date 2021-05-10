@@ -32,17 +32,17 @@ template <typename Traits, typename NodePtr, typename ParentPtr> struct tree_ite
     constexpr tree_iterator() noexcept
         : node(nullptr)
         , parent_(nullptr)
-        , position(-1)
+        , pos_in_parent(-1)
     {
     }
 
     // Default copy c-tor is fine
     tree_iterator(const tree_iterator& rhs) = default;
 
-    constexpr tree_iterator(NodePtr n, int p, ParentPtr parent = nullptr) noexcept
+    constexpr tree_iterator(NodePtr n, int pos, ParentPtr parent = nullptr) noexcept
         : node(n)
         , parent_(parent)
-        , position(p)
+        , pos_in_parent(pos)
     {
     }
 
@@ -87,7 +87,7 @@ private:
 
     [[nodiscard]] mutable_tree_iterator mutable_self() const noexcept
     {
-        return mutable_tree_iterator(node, position);
+        return mutable_tree_iterator(node, pos_in_parent, parent_);
     }
 
     explicit operator bool() const noexcept { return node != nullptr; }
@@ -127,8 +127,8 @@ private:
     NodePtr node;
     // Parent of the current node. Also, the position below is within this parent.
     ParentPtr parent_;
-    // The position within the node of the tree the iterator is pointing at.
-    int position;
+    // The position within the parent node of the node.
+    int pos_in_parent;
 };
 
 /*// Enable comparisons between differently cv-qualified nodes
