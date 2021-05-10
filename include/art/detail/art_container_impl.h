@@ -260,13 +260,15 @@ inline std::pair<typename db<P>::iterator, bool> db<P>::emplace_key_args(std::fa
 
 template <typename P>
 template <typename Source, typename Dest>
-inline void db<P>::shrink_node(const_iterator pos) noexcept
+inline void db<P>::shrink_node(const_iterator pos)
 {
-    auto src = make_unique_node_ptr(static_cast<Source*>(pos.parent()));
-    // Fetch the self-position iterator before we discard the source node
-    auto selfiter = src->selfpos_iterator();
-    auto rem = make_node_ptr<Dest>(std::move(src), pos.pos_in_parent);
-    release_to_parent(selfiter, std::move(rem));
+    auto src = static_cast<Source*>(pos.parent());
+    // If allocation fails here, the original node will be left untouched,
+    // which gives the shrinking operation the strong exception safety guarantee
+    auto rem = make_node_ptr<Dest>(*src, pos.pos_in_parent);
+    release_to_parent(src->self_iterator(), std::move(rem));
+    // All went well, we can deallocate the original node
+    deallocate(src);
 }
 
 template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_type key)
@@ -278,9 +280,6 @@ template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_typ
 
     if (pos.match(bitk.first)) {
         assert(pos);
-
-        // We'll reclaim the leaf on scope exit
-        auto reclaim_on_scope_exit = make_unique_node_ptr(static_cast<leaf_type*>(pos.node));
 
         // Also remove a leaf from its parent. In case of the no parent case,
         // we'll simply delete the root leaf
@@ -296,9 +295,10 @@ template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_typ
             // the node would become undersized after the operation. We have
             // to shrink the node and remove the value at the same token.
             if (parent_type == node_type::I4) {
+                // Pure noexcept branch
                 auto src = make_unique_node_ptr(static_cast<inode_4*>(leaf_parent));
                 auto rem = src->leave_last_child(pos.pos_in_parent, *this);
-                release_to_parent(leaf_parent->selfpos_iterator(), std::move(rem));
+                release_to_parent(leaf_parent->self_iterator(), std::move(rem));
             } else if (parent_type == node_type::I16) {
                 shrink_node<inode_16, inode_4>(pos);
             } else if (parent_type == node_type::I48) {
@@ -308,6 +308,9 @@ template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_typ
                 shrink_node<inode_256, inode_48>(pos);
             }
         }
+
+        // All went well, we can deallocate the leaf
+        deallocate(static_cast<leaf_type*>(pos.node));
 
         removed = 1;
     }

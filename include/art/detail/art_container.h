@@ -331,7 +331,7 @@ private:
     template <typename Source, typename Dest>
     void grow_node(const_iterator hint, node_ptr source_node, leaf_unique_ptr leaf);
 
-    template <typename Source, typename Dest> void shrink_node(const_iterator pos) noexcept;
+    template <typename Source, typename Dest> void shrink_node(const_iterator pos);
 
 private:
     // A helper struct to get the empty base class optimization for 0 size allocators.

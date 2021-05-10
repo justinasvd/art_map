@@ -16,6 +16,8 @@
 
 #include <algorithm>
 
+#include <boost/core/ignore_unused.hpp>
+
 namespace art
 {
 namespace detail
@@ -29,6 +31,9 @@ namespace detail
               << '\n';
     std::abort();
 #else
+    boost::ignore_unused(file);
+    boost::ignore_unused(line);
+    boost::ignore_unused(func);
     __builtin_unreachable();
 #endif
 }
@@ -203,7 +208,7 @@ public:
         }
     }
 
-    [[nodiscard]] typename Db::const_iterator selfpos_iterator() noexcept
+    [[nodiscard]] typename Db::const_iterator self_iterator() noexcept
     {
         return typename Db::const_iterator(this, pos_in_parent(), parent());
     }
@@ -360,16 +365,15 @@ template <typename Db> class basic_inode_4 : public basic_inode_4_parent<Db>
 public:
     using parent_type::basic_inode;
 
-    constexpr basic_inode_4(unique_node_ptr<inode16_type, Db> source_node,
-                            std::uint8_t child_to_delete)
-        : parent_type{*source_node}
+    constexpr basic_inode_4(const inode16_type& source_node, std::uint8_t child_to_delete)
+        : parent_type(source_node)
     {
-        const auto* source_keys_itr = source_node->keys.byte_array.cbegin();
+        const auto* source_keys_itr = source_node.keys.byte_array.cbegin();
         auto* keys_itr = keys.byte_array.begin();
-        const auto* source_children_itr = source_node->children.cbegin();
+        const auto* source_children_itr = source_node.children.cbegin();
         auto* children_itr = children.begin();
 
-        while (source_keys_itr != source_node->keys.byte_array.cbegin() + child_to_delete) {
+        while (source_keys_itr != source_node.keys.byte_array.cbegin() + child_to_delete) {
             *keys_itr++ = *source_keys_itr++;
             *children_itr++ = *source_children_itr++;
         }
@@ -377,7 +381,7 @@ public:
         ++source_keys_itr;
         ++source_children_itr;
 
-        while (source_keys_itr != source_node->keys.byte_array.cbegin() + inode16_type::min_size) {
+        while (source_keys_itr != source_node.keys.byte_array.cbegin() + inode16_type::min_size) {
             *keys_itr++ = *source_keys_itr++;
             *children_itr++ = *source_children_itr++;
         }
@@ -614,23 +618,23 @@ public:
         }
     }
 
-    constexpr basic_inode_16(unique_node_ptr<inode48_type, Db> source_node,
-                             std::uint8_t child_to_delete) noexcept
-        : parent_type{*source_node}
+    constexpr basic_inode_16(inode48_type& source_node, std::uint8_t child_to_delete) noexcept
+        : parent_type(source_node)
     {
-        source_node->verify_remove_preconditions(child_to_delete);
-        source_node->child_indices[child_to_delete] = empty_child;
+        source_node.verify_remove_preconditions(child_to_delete);
+        source_node.child_indices[child_to_delete] = empty_child;
 
         // TODO(laurynas): consider AVX512 gather?
         unsigned next_child = 0;
         unsigned i = 0;
         while (true) {
-            const auto source_child_i = source_node->child_indices[i];
+            const auto source_child_i = source_node.child_indices[i];
             if (source_child_i != empty_child) {
                 keys.byte_array[next_child] = static_cast<std::uint8_t>(i);
-                const auto source_child_ptr = source_node->children.pointer_array[source_child_i];
+                const auto source_child_ptr = source_node.children.pointer_array[source_child_i];
                 assert(source_child_ptr != nullptr);
                 this->children[next_child] = source_child_ptr;
+                this->reparent(this->children[next_child], i);
                 ++next_child;
                 if (next_child == basic_inode_16::capacity)
                     break;
@@ -814,7 +818,7 @@ public:
         }
         for (i = 0; i < inode16_type::capacity; ++i) {
             this->children.pointer_array[i] = source_node_ptr->children[i];
-            this->reparent(this->children.pointer_array[i], i);
+            this->reparent(this->children.pointer_array[i], source_node_ptr->keys.byte_array[i]);
         }
 
         const auto key_byte = child_ptr->pop_front();
@@ -826,23 +830,22 @@ public:
         }
     }
 
-    constexpr basic_inode_48(unique_node_ptr<inode256_type, Db> source_node,
-                             std::uint8_t child_to_delete) noexcept
-        : parent_type{*source_node}
+    constexpr basic_inode_48(inode256_type& source_node, std::uint8_t child_to_delete) noexcept
+        : parent_type(source_node)
     {
-        auto* const __restrict__ source_node_ptr = source_node.get();
-        source_node_ptr->children[child_to_delete] = nullptr;
+        source_node.children[child_to_delete] = nullptr;
 
-        // std::memset(&child_indices[0], empty_child, 256);
+        std::fill(child_indices.begin(), child_indices.end(), empty_child);
 
         std::uint8_t next_child = 0;
         for (unsigned child_i = 0; child_i < 256; child_i++) {
-            const auto child_ptr = source_node_ptr->children[child_i];
+            const auto child_ptr = source_node.children[child_i];
             if (child_ptr == nullptr)
                 continue;
 
             this->child_indices[child_i] = next_child;
-            this->children.pointer_array[next_child] = source_node_ptr->children[child_i];
+            this->children.pointer_array[next_child] = source_node.children[child_i];
+            this->reparent(this->children.pointer_array[next_child], child_i);
             ++next_child;
 
             if (next_child == this->children_count)
@@ -963,7 +966,7 @@ public:
     }
 
 private:
-    constexpr void verify_remove_preconditions(std::uint8_t child_index) noexcept
+    constexpr void verify_remove_preconditions(std::uint8_t child_index) const noexcept
     {
         assert(child_indices[child_index] != empty_child);
         assert(children.pointer_array[child_indices[child_index]] != nullptr);
