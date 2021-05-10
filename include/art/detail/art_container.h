@@ -90,7 +90,7 @@ public:
     db(db&& other, const allocator_type& alloc);
     db(std::initializer_list<value_type> init, const allocator_type&);
 
-    ~db() noexcept
+    ~db() noexcept(std::is_nothrow_destructible<mapped_type>::value)
     {
         if (!empty())
             delete_subtree(tree.root);
@@ -106,14 +106,16 @@ public:
     key_compare key_comp() const { return key_compare(); }
 
     // Iterator routines.
-    iterator begin();
-    const_iterator begin() const;
+    iterator begin() noexcept { return iterator(tree.root, 0); };
+    const_iterator begin() const noexcept { return const_iterator(tree.root, 0); }
+    const_iterator cbegin() const noexcept { return const_iterator(tree.root, 0); }
+
     iterator end();
     const_iterator end() const;
     reverse_iterator rbegin() { return reverse_iterator(end()); }
-    const_reverse_iterator rbegin() const { return const_reverse_iterator(end()); }
+    const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
     reverse_iterator rend() { return reverse_iterator(begin()); }
-    const_reverse_iterator rend() const { return const_reverse_iterator(begin()); }
+    const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
 
     size_type size() const noexcept { return leaf_count(); }
     bool empty() const noexcept { return tree.root == nullptr; }
@@ -207,7 +209,8 @@ public:
     // Return current memory use by tree nodes in bytes.
     [[nodiscard]] constexpr size_type current_memory_use() const noexcept
     {
-        return current_memory_use_;
+        return memory_use<leaf_type>() + memory_use<inode_4>() + memory_use<inode_16>() +
+               memory_use<inode_256>();
     }
 
     [[nodiscard]] constexpr size_type leaf_count() const noexcept { return get_count<leaf_type>(); }
@@ -268,12 +271,17 @@ private:
         return *static_cast<allocator_type*>(&tree);
     }
 
-    template <typename Node> constexpr size_type get_count() const noexcept
+    template <typename Node> [[nodiscard]] constexpr size_type get_count() const noexcept
     {
         return std::get<counter<Node>>(count_).instances;
     }
 
-    template <typename Node> constexpr size_type& count() noexcept
+    template <typename Node> [[nodiscard]] constexpr size_type memory_use() const noexcept
+    {
+        return sizeof(Node) * get_count<Node>();
+    }
+
+    template <typename Node> [[nodiscard]] constexpr size_type& count() noexcept
     {
         return std::get<counter<Node>>(count_).instances;
     }
@@ -292,20 +300,6 @@ private:
         auto delete_on_scope_exit = make_unique_node_ptr(node);
         if (node->type() != node_type::LEAF)
             inode_cast(node)->delete_subtree(*this);
-    }
-
-    template <typename Node> constexpr void increase_memory_use() noexcept
-    {
-        current_memory_use_ += sizeof(Node);
-        ++count<Node>();
-    }
-
-    template <typename Node> constexpr void decrease_memory_use() noexcept
-    {
-        assert(sizeof(Node) <= current_memory_use_);
-        current_memory_use_ -= sizeof(Node);
-        assert(count<Node>() != 0);
-        --count<Node>();
     }
 
     template <typename Node, typename... Args>
@@ -340,12 +334,9 @@ private:
         node_ptr root{nullptr};
     } tree;
 
-    size_type current_memory_use_{0};
-
     template <typename T> struct counter {
         size_type instances;
     };
-
     using node_stats_type = std::tuple<counter<leaf_type>, counter<inode_4>, counter<inode_16>,
                                        counter<inode_48>, counter<inode_256>>;
     node_stats_type count_{};

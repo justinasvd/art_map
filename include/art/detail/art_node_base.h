@@ -20,8 +20,8 @@ template <typename Header> struct art_node_base {
     using key_size_type = typename bitwise_key::size_type;
 
     constexpr art_node_base(node_type type, bitwise_key key, key_size_type key_size) noexcept
-        : type_(type)
-        , header(key, key_size)
+        : header(key, key_size)
+        , type_(type)
     {
     }
 
@@ -112,8 +112,8 @@ template <typename Header> struct art_node_base {
     }
 
 private:
-    node_type type_;
     Header header;
+    const node_type type_;
 };
 
 } // namespace detail

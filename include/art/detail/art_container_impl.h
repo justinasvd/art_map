@@ -24,7 +24,7 @@ inline constexpr void shift_right(std::pair<BitwiseKey, typename BitwiseKey::siz
 template <typename P>
 inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix& key) const noexcept
 {
-    const_iterator pos(tree.root, 0);
+    const_iterator pos = begin();
 
     if (pos) {
         while (pos.type() != node_type::LEAF) {
@@ -69,7 +69,8 @@ inline std::unique_ptr<Node, node_deleter<Node, db<P>>> db<P>::make_node_ptr(Arg
 
     node_allocator_traits::construct(alloc, node_ptr.get(), std::forward<Args>(args)...);
 
-    increase_memory_use<Node>();
+    ++count<Node>();
+
     return node_ptr;
 }
 
@@ -92,10 +93,12 @@ inline void db<P>::deallocate_node(Node* node) noexcept
     using node_allocator_type = typename P::allocator_type::template rebind<Node>::other;
     using node_allocator_traits = std::allocator_traits<node_allocator_type>;
 
+    assert(count<Node>() != 0);
+
     node_allocator_type alloc(allocator());
     node_allocator_traits::deallocate(alloc, node, 1);
 
-    decrease_memory_use<Node>();
+    --count<Node>();
 }
 
 template <typename P> inline void db<P>::deallocate(leaf_type* leaf) noexcept
@@ -282,32 +285,32 @@ template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_typ
         assert(pos);
 
         // Also remove a leaf from its parent. In case of the no parent case,
-        // we'll simply delete the root leaf
-        const auto leaf_parent = pos.parent();
+    // we'll simply delete the root leaf
+    const auto leaf_parent = pos.parent();
 
-        if (BOOST_UNLIKELY(leaf_parent == nullptr)) {
-            assert(pos.node == tree.root);
-            tree.root = nullptr;
-        } else if (!leaf_parent->remove(pos.pos_in_parent)) {
-            const node_type parent_type = leaf_parent->type();
+    if (BOOST_UNLIKELY(leaf_parent == nullptr)) {
+        assert(pos.node == tree.root);
+        tree.root = nullptr;
+    } else if (!leaf_parent->remove(pos.pos_in_parent)) {
+        const node_type parent_type = leaf_parent->type();
 
-            // We have failed to remove the value from the node because
-            // the node would become undersized after the operation. We have
-            // to shrink the node and remove the value at the same token.
-            if (parent_type == node_type::I4) {
-                // Pure noexcept branch
-                auto src = make_unique_node_ptr(static_cast<inode_4*>(leaf_parent));
-                auto rem = src->leave_last_child(pos.pos_in_parent, *this);
-                release_to_parent(leaf_parent->self_iterator(), std::move(rem));
-            } else if (parent_type == node_type::I16) {
-                shrink_node<inode_16, inode_4>(pos);
-            } else if (parent_type == node_type::I48) {
-                shrink_node<inode_48, inode_16>(pos);
-            } else {
-                assert(parent_type == node_type::I256);
-                shrink_node<inode_256, inode_48>(pos);
-            }
+        // We have failed to remove the value from the node because
+        // the node would become undersized after the operation. We have
+        // to shrink the node and remove the value at the same token.
+        if (parent_type == node_type::I4) {
+            // Pure noexcept branch
+            auto src = make_unique_node_ptr(static_cast<inode_4*>(leaf_parent));
+            auto rem = src->leave_last_child(pos.pos_in_parent, *this);
+            release_to_parent(leaf_parent->self_iterator(), std::move(rem));
+        } else if (parent_type == node_type::I16) {
+            shrink_node<inode_16, inode_4>(pos);
+        } else if (parent_type == node_type::I48) {
+            shrink_node<inode_48, inode_16>(pos);
+        } else {
+            assert(parent_type == node_type::I256);
+            shrink_node<inode_256, inode_48>(pos);
         }
+    }
 
         // All went well, we can deallocate the leaf
         deallocate(static_cast<leaf_type*>(pos.node));
@@ -332,7 +335,6 @@ template <typename P> inline void db<P>::swap(self_t& other) noexcept
     std::swap(tree.root, other.tree.root);
 
     // Swap the stats
-    std::swap(current_memory_use_, other.current_memory_use_);
     std::swap(count_, other.count_);
 }
 
@@ -347,7 +349,7 @@ template <typename P> inline void db<P>::clear()
 
 template <typename P> inline void db<P>::dump(std::ostream& os) const
 {
-    os << "node size = " << sizeof(node_base) << ", current memory use = " << current_memory_use()
+    os << "leaf size = " << sizeof(leaf_type) << ", current memory use = " << current_memory_use()
        << '\n';
     inode::dump(os, tree.root);
 }

@@ -81,12 +81,17 @@ template <typename Int, typename UInt, typename Order> struct int_bitwise_compar
     }
 };
 
-template <typename T, typename Key, typename Policy> struct unsigned_integral_bitwise_key {
+// Bitwise key is already pretty well laid out, but we pack it so that
+// the greedy compiler would not waste more memory than strictly necessary
+// in leaves and internal nodes. This packing shaves off 8 bytes for each leaf,
+// with negligible effect on overall performance.
+template <typename T, typename Key, typename Policy>
+struct __attribute__((__packed__)) unsigned_integral_bitwise_key {
     static_assert(std::is_unsigned<Key>::value && std::is_integral<Key>::value,
                   "Unsupported unsigned integral key type");
     static_assert(sizeof(T) == sizeof(Key), "Invalid key size");
 
-    using size_type = unsigned int;
+    using size_type = std::uint8_t;
     static constexpr size_type num_bytes = sizeof(Key);
 
     static constexpr size_type max_size() noexcept { return num_bytes; }
