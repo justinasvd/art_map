@@ -30,19 +30,19 @@ template <typename Traits, typename NodePtr, typename ParentPtr> struct tree_ite
     using iterator_category = std::bidirectional_iterator_tag;
 
     constexpr tree_iterator() noexcept
-        : node(nullptr)
+        : node_(nullptr)
         , parent_(nullptr)
-        , pos_in_parent(-1)
+        , pos_in_parent(0)
     {
     }
 
     // Default copy c-tor is fine
     tree_iterator(const tree_iterator& rhs) = default;
 
-    constexpr tree_iterator(NodePtr n, int pos, ParentPtr parent = nullptr) noexcept
-        : node(n)
+    constexpr tree_iterator(NodePtr node, unsigned int index, ParentPtr parent = nullptr) noexcept
+        : node_(node)
         , parent_(parent)
-        , pos_in_parent(pos)
+        , pos_in_parent(index)
     {
     }
 
@@ -75,6 +75,10 @@ template <typename Traits, typename NodePtr, typename ParentPtr> struct tree_ite
         return tmp;
     }
 
+    [[nodiscard]] NodePtr node() const noexcept { return node_; }
+    [[nodiscard]] ParentPtr parent() const noexcept { return parent_; }
+    [[nodiscard]] unsigned int index() const noexcept { return pos_in_parent; }
+
 private:
     using traits_type = std::remove_const_t<Traits>;
     friend class db<traits_type>;
@@ -87,23 +91,21 @@ private:
 
     [[nodiscard]] mutable_tree_iterator mutable_self() const noexcept
     {
-        return mutable_tree_iterator(node, pos_in_parent, parent_);
+        return mutable_tree_iterator(node_, pos_in_parent, parent_);
     }
 
-    explicit operator bool() const noexcept { return node != nullptr; }
+    explicit operator bool() const noexcept { return node_ != nullptr; }
 
-    [[nodiscard]] node_type type() const noexcept { return node->type(); }
-
-    ParentPtr parent() const noexcept { return parent_; }
+    [[nodiscard]] node_type type() const noexcept { return node_->type(); }
 
     [[nodiscard]] bool match(bitwise_key key) const noexcept
     {
-        return node && (node->type() == node_type::LEAF) && node->match(key);
+        return node_ && (node_->type() == node_type::LEAF) && node_->match(key);
     }
-    [[nodiscard]] key_size_type prefix_length() const noexcept { return node->prefix_length(); }
+    [[nodiscard]] key_size_type prefix_length() const noexcept { return node_->prefix_length(); }
     [[nodiscard]] key_size_type shared_prefix_length(bitwise_key key) const noexcept
     {
-        return node->shared_prefix_length(key);
+        return node_->shared_prefix_length(key);
     }
 
     void increment() noexcept
@@ -124,27 +126,29 @@ private:
 
 private:
     // The node in the tree the iterator is pointing at.
-    NodePtr node;
+    NodePtr node_;
     // Parent of the current node. Also, the position below is within this parent.
     ParentPtr parent_;
     // The position within the parent node of the node.
-    int pos_in_parent;
+    unsigned int pos_in_parent;
 };
 
-/*// Enable comparisons between differently cv-qualified nodes
-template <typename Traits, typename U, typename V,
-          typename = typename std::is_same<std::remove_cv_t<U>, std::remove_cv_t<V>>::type>
-inline bool operator==(const tree_iterator<Traits, U>& lhs,
-                       const tree_iterator<Traits, V>& rhs) noexcept
+// Enable comparisons between differently cv-qualified nodes
+template <
+    typename Traits, typename OtherTraits, typename NodePtr, typename ParentPtr,
+    typename = typename std::is_same<std::remove_cv_t<Traits>, std::remove_cv_t<OtherTraits>>::type>
+inline bool operator==(const tree_iterator<Traits, NodePtr, ParentPtr>& lhs,
+                       const tree_iterator<OtherTraits, NodePtr, ParentPtr>& rhs) noexcept
 {
-    return lhs.node == rhs.node && lhs.position == rhs.position;
+    return lhs.node() == rhs.node() && lhs.parent() == rhs.parent() && lhs.index() == rhs.index();
 }
-template <typename Traits, typename U, typename V>
-inline bool operator!=(const tree_iterator<Traits, U>& lhs,
-                       const tree_iterator<Traits, V>& rhs) noexcept
+
+template <typename Traits1, typename Traits2, typename Node, typename Parent>
+inline bool operator!=(const tree_iterator<Traits1, Node, Parent>& lhs,
+                       const tree_iterator<Traits2, Node, Parent>& rhs) noexcept
 {
     return !(lhs == rhs);
-}*/
+}
 
 } // namespace detail
 } // namespace art

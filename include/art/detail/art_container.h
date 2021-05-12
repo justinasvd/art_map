@@ -110,9 +110,9 @@ public:
     const_iterator begin() const noexcept { return const_iterator(tree.root, 0); }
     const_iterator cbegin() const noexcept { return const_iterator(tree.root, 0); }
 
-    iterator end();
-    const_iterator end() const;
-    reverse_iterator rbegin() { return reverse_iterator(end()); }
+    iterator end() noexcept { return iterator(tree.root, past_end(tree.root)); }
+    const_iterator end() const noexcept { return const_iterator(tree.root, past_end(tree.root)); }
+    reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
     const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
     reverse_iterator rend() { return reverse_iterator(begin()); }
     const_reverse_iterator rend() const noexcept { return const_reverse_iterator(begin()); }
@@ -265,6 +265,8 @@ private:
     template <typename... Args>
     [[nodiscard]] iterator emplace_hint_key_args(iterator hint, fast_key_type key, Args&&... args);
 
+    void internal_erase(const_iterator pos);
+
 private:
     [[nodiscard]] allocator_type& allocator() noexcept
     {
@@ -303,7 +305,7 @@ private:
     }
 
     template <typename Node, typename... Args>
-    std::unique_ptr<Node, node_deleter<Node, self_t>> make_node_ptr(Args&&... args);
+    unique_node_ptr<Node, self_t> make_node_ptr(Args&&... args);
 
     // Leaf creation/deallocation
     template <typename... Args>
@@ -314,18 +316,35 @@ private:
     void deallocate(inode_16* node) noexcept { deallocate_node(node); }
     void deallocate(inode_48* node) noexcept { deallocate_node(node); }
     void deallocate(inode_256* node) noexcept { deallocate_node(node); }
-    void deallocate(leaf_type* leaf) noexcept;
-    void deallocate(node_ptr node) noexcept;
+    void deallocate(leaf_type* leaf) noexcept(std::is_nothrow_destructible<mapped_type>::value);
+    void deallocate(node_ptr node) noexcept(std::is_nothrow_destructible<mapped_type>::value);
+
+    static int past_end(node_ptr node) noexcept;
 
     template <typename NodePtr> void release_to_parent(const_iterator hint, NodePtr child) noexcept;
 
     void create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix, node_ptr pdst,
                         leaf_unique_ptr leaf);
 
-    template <typename Source, typename Dest>
-    void grow_node(const_iterator hint, node_ptr source_node, leaf_unique_ptr leaf);
+    template <typename Source>
+    void grow_node(const_iterator hint, node_ptr dest_node, leaf_unique_ptr leaf);
 
-    template <typename Source, typename Dest> void shrink_node(const_iterator pos);
+    // Functions to convert a node to a smaller type of node. This allows to fully
+    // generalize the shrinking routine without stooping to strange hacks.
+    template <typename Node>
+    [[nodiscard]] unique_node_ptr<typename Node::smaller_inode_type, self_t> make_smaller_node(
+        Node& src, std::uint8_t child_to_delete)
+    {
+        return make_node_ptr<typename Node::smaller_inode_type>(src, child_to_delete);
+    }
+
+    [[nodiscard]] unique_node_ptr<node_base, self_t> make_smaller_node(
+        inode_4& src, std::uint8_t child_to_delete) noexcept
+    {
+        return src.leave_last_child(child_to_delete, *this);
+    }
+
+    template <typename Source> void shrink_node(const_iterator pos);
 
 private:
     // A helper struct to get the empty base class optimization for 0 size allocators.

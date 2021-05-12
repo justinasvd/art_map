@@ -79,7 +79,7 @@ template <typename C> inline void insert(benchmark::State& state)
 }
 
 // Benchmark lookup of values in a container.
-template <typename C> void lookup(benchmark::State& state)
+template <typename C> void find(benchmark::State& state)
 {
     C container;
     const auto values = fill_container(container);
@@ -93,21 +93,18 @@ template <typename C> void lookup(benchmark::State& state)
     }
 }
 
-// Benchmark lookup of values in a full container, meaning that values
-// are inserted in-order to take advantage of biased insertion, which
-// yields a full tree.
-template <typename C> void full_lookup(benchmark::State& state)
+// Benchmark lookup of values in a container, where values
+// are inserted in-order.
+template <typename C> void find_sorted(benchmark::State& state)
 {
-    using value_t = test::remove_key_const_t<typename C::value_type>;
-
-    const auto values = test::generate_values<value_t, max_values>(seed);
+    const auto values = bench_dataset<C>();
 
     C container;
     {
-        std::vector<value_t> sorted(values);
+        auto sorted = values; // Make a copy
         std::sort(sorted.begin(), sorted.end());
 
-        for (value_t& v : sorted) {
+        for (auto& v : sorted) {
             container.insert(std::move(v));
         }
     }
@@ -282,11 +279,11 @@ template <typename C> inline void fifo(benchmark::State& state)
 
 #define GENERATE_BENCHMARKS(Container, ...)                                                        \
     /*GENERATE_BENCH_SET(fwditer, Container, __VA_ARGS__);*/                                       \
-    GENERATE_BENCH_SET(lookup, Container, __VA_ARGS__);                                            \
-    GENERATE_BENCH_SET(full_lookup, Container, __VA_ARGS__);                                       \
+    GENERATE_BENCH_SET(find, Container, __VA_ARGS__);                                              \
+    GENERATE_BENCH_SET(find_sorted, Container, __VA_ARGS__);                                       \
     GENERATE_BENCH_SET(insert, Container, __VA_ARGS__);                                            \
-    /*GENERATE_BENCH_SET(erase, Container, __VA_ARGS__);                                           \
-    GENERATE_BENCH_SET(queue_addrem, Container, __VA_ARGS__);                                      \
+    GENERATE_BENCH_SET(erase, Container, __VA_ARGS__);                                             \
+    /*GENERATE_BENCH_SET(queue_addrem, Container, __VA_ARGS__);                                    \
     GENERATE_BENCH_SET(mixed_addrem, Container, __VA_ARGS__);                                      \
     GENERATE_BENCH_SET(fifo, Container, __VA_ARGS__)*/                                             \
     /**/

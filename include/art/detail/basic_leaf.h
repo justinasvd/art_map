@@ -26,6 +26,9 @@ struct basic_leaf final : public art_node_base<Header> {
     {
     }
 
+    // There is always a single element in this leaf
+    [[nodiscard]] static constexpr std::size_t size() noexcept { return 1; }
+
     template <typename... Args>
     void emplace_value(allocator_type& alloc,
                        Args&&... args) noexcept(std::is_nothrow_constructible<T>::value)
@@ -38,12 +41,12 @@ struct basic_leaf final : public art_node_base<Header> {
         allocator_traits::destroy(alloc, addr());
     }
 
-    T& value() noexcept { return *addr(); }
-    const T& value() const noexcept { return *addr(); }
+    [[nodiscard]] T& value() noexcept { return *addr(); }
+    [[nodiscard]] const T& value() const noexcept { return *addr(); }
 
 private:
-    T* addr() noexcept { return reinterpret_cast<T*>(&data); }
-    const T* addr() const noexcept { return reinterpret_cast<const T*>(&data); }
+    [[nodiscard]] T* addr() noexcept { return reinterpret_cast<T*>(&data); }
+    [[nodiscard]] const T* addr() const noexcept { return reinterpret_cast<const T*>(&data); }
 
 private:
     std::aligned_storage_t<sizeof(T), alignof(T)> data;
@@ -64,12 +67,15 @@ struct basic_leaf<Header, std::integral_constant<T, V>, Alloc> final
     {
     }
 
+    // There is always a single element in this leaf
+    [[nodiscard]] static constexpr std::size_t size() noexcept { return 1; }
+
     // Does nothing, since the value is a constant expression
     template <typename... Args> static void emplace_value(allocator_type&, Args&&...) noexcept {}
     static void destroy_value(allocator_type&) noexcept {}
 
     // Simply return a value
-    static constexpr value_type value() noexcept { return value_type(); }
+    [[nodiscard]] static constexpr value_type value() noexcept { return value_type(); }
 };
 
 } // namespace detail

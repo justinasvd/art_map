@@ -1412,7 +1412,7 @@ inline void btree_node<P>::remove_value(allocator_type& alloc, int i) noexcept(i
     std::move_backward(miter(right), miter(cnt), miter(dst_cnt));
 
     if (!is_leaf()) {
-        assert(child(right)->count() == 0);
+        // assert(child(right)->count() == 0);
         for (int j = right; j < cnt; ++j) {
             assign_child(j, child(j + 1));
         }
