@@ -8,9 +8,6 @@
 #include "art/map.h"
 #include "art/set.h"
 
-#include "btree/btree_map.h"
-#include "btree/btree_set.h"
-
 #include "test/test_utils.hpp"
 
 // The number of values to use for benchmarks
@@ -272,9 +269,7 @@ template <typename C> inline void fifo(benchmark::State& state)
     GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(std::Container, __VA_ARGS__));                  \
     GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(std::multi##Container, __VA_ARGS__));           \
     GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(art::Container, __VA_ARGS__));                  \
-    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(art::multi##Container, __VA_ARGS__));           \
-    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(btree::btree_##Container, __VA_ARGS__));        \
-    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(btree::btree_multi##Container, __VA_ARGS__))    \
+    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(art::multi##Container, __VA_ARGS__))            \
     /**/
 
 #define GENERATE_BENCHMARKS(Container, ...)                                                        \
