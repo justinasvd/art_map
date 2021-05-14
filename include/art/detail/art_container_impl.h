@@ -134,13 +134,6 @@ inline void db<P>::deallocate(node_ptr node) noexcept(
     }
 }
 
-template <typename P> inline int db<P>::past_end(node_ptr node) noexcept
-{
-    if (BOOST_UNLIKELY(!node))
-        return 0;
-    return node->type() != node_type::LEAF ? inode_cast(node)->num_children() + 1 : 1;
-}
-
 template <typename P>
 template <typename NodePtr>
 inline void db<P>::release_to_parent(const_iterator hint, NodePtr child) noexcept

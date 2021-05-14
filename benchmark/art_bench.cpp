@@ -47,7 +47,7 @@ template <typename C> inline void fwditer(benchmark::State& state)
     auto it = container.begin();
 
     for (auto _ : state) {
-        do_not_optimize(*it);
+        do_not_optimize(&it);
         if (++it == container.end())
             it = container.begin();
     }
@@ -273,7 +273,7 @@ template <typename C> inline void fifo(benchmark::State& state)
     /**/
 
 #define GENERATE_BENCHMARKS(Container, ...)                                                        \
-    /*GENERATE_BENCH_SET(fwditer, Container, __VA_ARGS__);*/                                       \
+    GENERATE_BENCH_SET(fwditer, Container, __VA_ARGS__);                                           \
     GENERATE_BENCH_SET(find, Container, __VA_ARGS__);                                              \
     GENERATE_BENCH_SET(find_sorted, Container, __VA_ARGS__);                                       \
     GENERATE_BENCH_SET(insert, Container, __VA_ARGS__);                                            \
@@ -284,15 +284,10 @@ template <typename C> inline void fifo(benchmark::State& state)
     /**/
 
 GENERATE_BENCHMARKS(set<int>);
-// GENERATE_BENCHMARKS(map<std::uint64_t, int>);
-// GENERATE_BENCHMARKS(map<std::string, int>);
-// GENERATE_BENCHMARKS(set<std::int64_t>);
-// GENERATE_BENCHMARKS(map<std::int64_t, std::string>);
-// GENERATE_BENCHMARKS(set<unsigned int>);
-// GENERATE_BENCHMARKS(map<unsigned int, int>);
-// GENERATE_BENCHMARKS(set<std::uint64_t>);
-GENERATE_BENCHMARKS(map<std::uint64_t, std::string>);
+GENERATE_BENCHMARKS(map<int, std::string>);
 // GENERATE_BENCHMARKS(set<int*>);
-// GENERATE_BENCHMARKS(map<int*, int>);
+// GENERATE_BENCHMARKS(map<int*, std::string>);
+// GENERATE_BENCHMARKS(set<std::uint64_t>);
+// GENERATE_BENCHMARKS(map<std::uint64_t, std::string>);
 
 BENCHMARK_MAIN();

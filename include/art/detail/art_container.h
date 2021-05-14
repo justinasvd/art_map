@@ -71,8 +71,8 @@ public:
     using difference_type = typename Traits::difference_type;
     using key_compare = typename Traits::key_compare;
     using allocator_type = typename Traits::allocator_type;
-    using iterator = tree_iterator<Traits, node_ptr, inode*>;
-    using const_iterator = tree_iterator<const Traits, node_ptr, inode*>;
+    using iterator = tree_iterator<Traits, node_base, inode>;
+    using const_iterator = tree_iterator<const Traits, node_base, inode>;
     using reverse_iterator = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
@@ -106,12 +106,17 @@ public:
     key_compare key_comp() const { return key_compare(); }
 
     // Iterator routines.
-    iterator begin() noexcept { return iterator(tree.root, 0); };
-    const_iterator begin() const noexcept { return const_iterator(tree.root, 0); }
-    const_iterator cbegin() const noexcept { return const_iterator(tree.root, 0); }
+    iterator begin() noexcept { return cbegin().mutable_self(); };
+    const_iterator cbegin() const noexcept { return inode::leftmost_leaf(tree.root); }
+    const_iterator begin() const noexcept { return cbegin(); }
 
-    iterator end() noexcept { return iterator(tree.root, past_end(tree.root)); }
-    const_iterator end() const noexcept { return const_iterator(tree.root, past_end(tree.root)); }
+    iterator end() noexcept { return iterator(tree.root, iterator::is_leaf(tree.root)); }
+    const_iterator cend() const noexcept
+    {
+        return const_iterator(tree.root, iterator::is_leaf(tree.root));
+    }
+    const_iterator end() const noexcept { return cend(); }
+
     reverse_iterator rbegin() noexcept { return reverse_iterator(end()); }
     const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator(end()); }
     reverse_iterator rend() { return reverse_iterator(begin()); }
@@ -242,7 +247,8 @@ private:
     using key_size_type = typename bitwise_key::size_type;
     using bitwise_key_prefix = std::pair<bitwise_key, key_size_type>;
 
-    static constexpr bitwise_key_prefix make_bitwise_key_prefix(fast_key_type key) noexcept
+    [[nodiscard]] static constexpr bitwise_key_prefix make_bitwise_key_prefix(
+        fast_key_type key) noexcept
     {
         bitwise_key bitk(key);
         return std::make_pair(bitk, bitk.max_size());
@@ -318,8 +324,6 @@ private:
     void deallocate(inode_256* node) noexcept { deallocate_node(node); }
     void deallocate(leaf_type* leaf) noexcept(std::is_nothrow_destructible<mapped_type>::value);
     void deallocate(node_ptr node) noexcept(std::is_nothrow_destructible<mapped_type>::value);
-
-    static int past_end(node_ptr node) noexcept;
 
     template <typename NodePtr> void release_to_parent(const_iterator hint, NodePtr child) noexcept;
 

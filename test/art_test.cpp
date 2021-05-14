@@ -26,6 +26,9 @@ int main()
 
     db.dump(std::cout);
 
+    std::cout << "Size: " << db.size() << std::endl;
+    std::cout << "Iter. dist: " << std::distance(db.cbegin(), db.cend()) << std::endl;
+
     db.clear();
 
     return 0;
