@@ -50,6 +50,11 @@ template <> struct bitwise_compare<comparison_ops::less_tag> {
         // Flip bytes to Big Endian order (no-op on Big Endian architectures)
         return boost::endian::native_to_big(k);
     }
+
+    template <typename T> [[nodiscard]] inline static constexpr T unpack(T k) noexcept
+    {
+        return boost::endian::big_to_native(k);
+    }
 };
 
 template <> struct bitwise_compare<comparison_ops::greater_tag> {
@@ -96,6 +101,7 @@ struct __attribute__((__packed__)) unsigned_integral_bitwise_key {
 
     static constexpr size_type max_size() noexcept { return num_bytes; }
 
+    constexpr unsigned_integral_bitwise_key() noexcept = default;
     explicit constexpr unsigned_integral_bitwise_key(T k) noexcept
         : key{Policy::byte_swap(k)}
     {
@@ -125,6 +131,11 @@ struct __attribute__((__packed__)) unsigned_integral_bitwise_key {
         shift_left(len);
         key.bitkey |= value.key.bitkey;
     }
+    constexpr void push_front(
+        const std::pair<unsigned_integral_bitwise_key, size_type>& prefix) noexcept
+    {
+        push_front(prefix.first, prefix.second);
+    }
 
     constexpr void shift_right(size_type nbytes) noexcept { key.bitkey >>= (nbytes * CHAR_BIT); }
 
@@ -145,6 +156,8 @@ struct __attribute__((__packed__)) unsigned_integral_bitwise_key {
         return unsigned_integral_bitwise_key(k.key.bitkey & (himask(cut_len) - 1),
                                              std::false_type());
     }
+
+    T unpack() const noexcept { return Policy::unpack(key.bitkey); }
 
 private:
     // Non-byte-swapping constructor

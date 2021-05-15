@@ -11,7 +11,7 @@ namespace detail
 
 // Set traits
 template <typename Key, typename Compare, typename Alloc, typename MultiSet>
-struct set_traits : public container_traits<Key, Key, Compare, Alloc, MultiSet> {
+struct set_traits : public container_traits<Key, std::false_type, Key, Compare, Alloc, MultiSet> {
     using mapped_type = std::false_type;
 
     using fast_key_type = fast_const_argument_t<Key>;
@@ -21,6 +21,8 @@ struct set_traits : public container_traits<Key, Key, Compare, Alloc, MultiSet> 
     {
         return mapped_type();
     }
+
+    [[nodiscard]] static fast_key_type value_ref(Key key, mapped_type) noexcept { return key; }
 };
 
 } // namespace detail

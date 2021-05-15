@@ -12,9 +12,27 @@ namespace detail
 // Map traits
 template <typename Key, typename Data, typename Compare, typename Alloc, typename MultiMap>
 struct map_traits
-    : public container_traits<Key, std::pair<const Key, Data>, Compare, Alloc, MultiMap> {
-    using mapped_type = Data;
+    : public container_traits<Key, Data, std::pair<const Key, Data>, Compare, Alloc, MultiMap> {
     using fast_key_type = fast_const_argument_t<Key>;
+
+    // Differently from the standard std::map implementations, we don't store
+    // std::pairs in the tree. The key is decoupled from the value, and leaves
+    // contain mapped types only, with keys being implicitly encoded into the
+    // tree structure itself. This forces us to slightly change the returned
+    // reference type to contain the reference to the mapped type (as opposed to
+    // the reference to the whole pair). This might break some code that relies
+    // on very specific things being returned from a map.
+    using reference = std::pair<const Key, Data&>;
+    using const_reference = std::pair<const Key, const Data&>;
+
+    [[nodiscard]] static reference value_ref(Key key, Data& value) noexcept
+    {
+        return reference(std::move(key), std::ref(value));
+    }
+    [[nodiscard]] static const_reference value_ref(Key key, const Data& value) noexcept
+    {
+        return const_reference(std::move(key), std::cref(value));
+    }
 
     // We don't really care what kind of Pair we get here. The biggest requirement is not to
     // make any temporaries (!). So long that the first member of the pair is convertible to

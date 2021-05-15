@@ -2,7 +2,6 @@
 #define ART_DETAIL_ART_CONTAINER_HEADER_INCLUDED
 
 #include "art_deleter.h"
-#include "basic_leaf.h"
 #include "tree_iterator.h"
 
 #include <cassert>
@@ -29,11 +28,7 @@ private:
     using node_base = typename Traits::node_base;
     using node_ptr = node_base*;
     using fast_key_type = typename Traits::fast_key_type;
-
-    // Leaves are always single-valued, so leaf count is the same as
-    // the actual size of the container.
-    using leaf_type =
-        basic_leaf<header_type, typename Traits::mapped_type, typename Traits::allocator_type>;
+    using leaf_type = typename Traits::leaf_type;
 
     using self_t = db<Traits>;
     using leaf_unique_ptr = unique_node_ptr<leaf_type, self_t>;

@@ -2,6 +2,8 @@
 #ifndef ART_DETAIL_ART_ITERATOR_HEADER_INCLUDED
 #define ART_DETAIL_ART_ITERATOR_HEADER_INCLUDED
 
+#include "art_node_base.h"
+
 #include <type_traits>
 
 #include <boost/config.hpp> // likely/unlikely macros
@@ -14,44 +16,51 @@ namespace detail
 // Forward declaration of the container
 template <typename Traits> class db;
 
-template <typename Traits, typename Node, typename INode> struct tree_iterator {
-    using key_type = typename Traits::key_type;
+template <typename Traits, typename Node, typename INode> class tree_iterator
+{
+    static constexpr bool is_const = std::is_const<Traits>::value;
     using fast_key_type = typename Traits::fast_key_type;
+    using real_leaf_type = typename Traits::leaf_type;
 
+    // Const-corrected leaf type
+    using leaf_type = std::conditional_t<is_const, const real_leaf_type, real_leaf_type>;
+
+    // This helper here is to give a pointer to the operator->().
+    // Note that this proxy will never hold a leaf value (so no actual
+    // value copying is involved), but rather the (const) reference to
+    // that value.
+    template <typename T> struct arrow_proxy {
+        T vref;
+        constexpr T* operator->() noexcept { return std::addressof(vref); }
+    };
+
+public:
+    using key_type = typename Traits::key_type;
     using value_type = typename Traits::value_type;
     using size_type = typename Traits::size_type;
-    using difference_type = typename Traits::difference_type;
-    using const_pointer = typename Traits::const_pointer;
     using const_reference = typename Traits::const_reference;
-
-    static constexpr bool is_const = std::is_const<Traits>::value;
-
-    using pointer = std::conditional_t<is_const, const_pointer, typename Traits::pointer>;
+    using const_pointer = arrow_proxy<const_reference>;
     using reference = std::conditional_t<is_const, const_reference, typename Traits::reference>;
-
+    using pointer = arrow_proxy<reference>;
+    using difference_type = typename Traits::difference_type;
     using iterator_category = std::bidirectional_iterator_tag;
 
-    constexpr tree_iterator() noexcept
-        : node_(nullptr)
-        , parent_(nullptr)
-        , pos_in_parent(0)
-    {
-    }
+    constexpr tree_iterator() noexcept = default;
 
     // Default copy c-tor is fine
-    tree_iterator(const tree_iterator& rhs) = default;
+    tree_iterator(const tree_iterator& rhs) noexcept = default;
 
     constexpr tree_iterator(Node* node, unsigned int index, INode* parent = nullptr) noexcept
         : node_(node)
         , parent_(parent)
+        , key_{}
         , pos_in_parent(index)
     {
     }
 
-    // Accessors for the key/value the iterator is pointing at.
-    // fast_key_type key() const noexcept { return node->key(position); }
-    // pointer operator->() const noexcept { return &node->ref_value(position); }
-    // reference operator*() const noexcept { return node->ref_value(position); }
+    // Accessors for the key/value the iterator is pointing at
+    pointer operator->() const noexcept { return arrow_proxy<reference>{iter_deref()}; }
+    reference operator*() const noexcept { return iter_deref(); }
 
     // Increment/decrement the iterator.
     tree_iterator& operator++() noexcept
@@ -67,13 +76,13 @@ template <typename Traits, typename Node, typename INode> struct tree_iterator {
     tree_iterator operator++(int) noexcept
     {
         tree_iterator tmp = *this;
-        ++*this;
+        increment();
         return tmp;
     }
     tree_iterator operator--(int) noexcept
     {
         tree_iterator tmp = *this;
-        --*this;
+        decrement();
         return tmp;
     }
 
@@ -126,6 +135,12 @@ private:
     [[nodiscard]] key_size_type shared_prefix_length(bitwise_key key) const noexcept
     {
         return node_->shared_prefix_length(key);
+    }
+
+    [[nodiscard]] reference iter_deref() const noexcept
+    {
+        assert(is_leaf(node_));
+        return Traits::value_ref(key_.unpack(), static_cast<leaf_type*>(node_)->value());
     }
 
     void increment() noexcept
@@ -184,11 +199,15 @@ private:
         //     }
     }
 
+    void assign_key(bitwise_key k) noexcept { key_ = k; }
+
 private:
-    // The node in the tree the iterator is pointing at.
+    // The node in the tree the iterator is pointing at
     Node* node_;
-    // Parent of the current node. Also, the position below is within this parent.
+    // Parent of the current node. Also, the position below is within this parent
     INode* parent_;
+    // Current key
+    bitwise_key key_;
     // The position within the parent node of the node.
     unsigned int pos_in_parent;
 };

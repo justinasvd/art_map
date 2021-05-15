@@ -2,6 +2,7 @@
 #define ART_CONTAINER_TRAITS_HEADER_INCLUDED
 
 #include "basic_header.h"
+#include "basic_leaf.h"
 #include "bitwise_key.h"
 
 namespace art
@@ -9,9 +10,11 @@ namespace art
 namespace detail
 {
 
-template <typename Key, typename Value, typename Compare, typename Alloc, typename MultiMap>
+template <typename Key, typename Data, typename Value, typename Compare, typename Alloc,
+          typename MultiMap>
 struct container_traits {
     using key_type = Key;
+    using mapped_type = Data;
     using value_type = Value;
     using pointer = value_type*;
     using const_pointer = const value_type*;
@@ -29,6 +32,7 @@ struct container_traits {
     using bitwise_key = bitwise_key_t<Key, Compare>;
     using header_type = basic_header<bitwise_key>;
     using node_base = art_node_base<header_type>;
+    using leaf_type = basic_leaf<header_type, mapped_type, allocator_type>;
 };
 
 // Fast argument type

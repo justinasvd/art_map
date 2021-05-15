@@ -28,6 +28,9 @@ int main()
 
     std::cout << "Size: " << db.size() << std::endl;
     std::cout << "Iter. dist: " << std::distance(db.cbegin(), db.cend()) << std::endl;
+    for (auto it = db.begin(); it != db.end(); ++it) {
+        std::cout << it->first << ": " << it->second << std::endl;
+    }
 
     db.clear();
 

@@ -177,11 +177,14 @@ public:
     [[nodiscard]] static constexpr const_iterator leftmost_leaf(node_ptr node,
                                                                 unsigned start = 0) noexcept
     {
+        bitwise_key k{};
         const_iterator pos(node, 0);
         while (pos && pos.type() != node_type::LEAF) {
+            k.push_front(node->prefix());
             pos = static_cast<inode_type*>(pos.node())->leftmost_child(start);
             start = 0;
         }
+        pos.assign_key(k);
         return pos;
     }
 
@@ -486,14 +489,14 @@ public:
             return const_iterator(children[result - 1], result - 1, this);
 #endif // __SSE__
 
-        return const_iterator();
+        return const_iterator{};
     }
 
     [[nodiscard]] constexpr const_iterator leftmost_child(unsigned start) noexcept
     {
         if (start < this->children_count)
             return const_iterator(children[start], start, this);
-        return const_iterator();
+        return const_iterator{};
     }
 
     constexpr void replace(const_iterator pos, node_ptr child) noexcept
@@ -702,14 +705,14 @@ public:
 #else
 #error Needs porting
 #endif
-        return const_iterator();
+        return const_iterator{};
     }
 
     [[nodiscard]] constexpr const_iterator leftmost_child(unsigned start) noexcept
     {
         if (start < this->children_count)
             return const_iterator(children[start], start, this);
-        return const_iterator();
+        return const_iterator{};
     }
 
     constexpr void replace(const_iterator pos, node_ptr child) noexcept
@@ -906,7 +909,7 @@ public:
                 ++key_byte;
             }
         }
-        return const_iterator();
+        return const_iterator{};
     }
 
     constexpr void remove(std::uint8_t child_index) noexcept
@@ -926,7 +929,7 @@ public:
             return const_iterator(children.pointer_array[child_i],
                                   static_cast<std::uint8_t>(key_byte), this);
         }
-        return const_iterator();
+        return const_iterator{};
     }
 
     constexpr void replace(const_iterator pos, node_ptr child) noexcept
@@ -1057,7 +1060,7 @@ public:
         const auto key_int_byte = static_cast<std::uint8_t>(key_byte);
         if (children[key_int_byte] != nullptr)
             return const_iterator(children[key_int_byte], key_int_byte, this);
-        return const_iterator();
+        return const_iterator{};
     }
 
     [[nodiscard]] constexpr const_iterator leftmost_child(unsigned key_byte) noexcept
@@ -1066,7 +1069,7 @@ public:
             if (children[key_byte] != nullptr)
                 return const_iterator(children[key_byte], key_byte, this);
         }
-        return const_iterator();
+        return const_iterator{};
     }
 
     constexpr void replace(const_iterator pos, node_ptr child) noexcept
