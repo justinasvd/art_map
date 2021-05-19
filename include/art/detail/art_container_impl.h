@@ -165,28 +165,35 @@ inline void db<P>::release_to_parent(const_iterator hint, NodePtr child) noexcep
 }
 
 template <typename P>
-inline void db<P>::create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix,
-                                  node_ptr pdst, leaf_unique_ptr leaf)
+inline typename db<P>::iterator db<P>::create_inode_4(const_iterator hint,
+                                                      const bitwise_key_prefix& prefix,
+                                                      node_ptr pdst, leaf_unique_ptr leaf)
 {
-    auto new_node = make_node_ptr<inode_4>(prefix);
-    new_node->add_two_to_empty(pdst, std::move(leaf));
-    release_to_parent(hint, std::move(new_node));
+    auto in4 = make_node_ptr<inode_4>(prefix);
+    const iterator leaf_iter = in4->add_two_to_empty(pdst, std::move(leaf));
+    release_to_parent(hint, std::move(in4));
+    return leaf_iter;
 }
 
 template <typename P>
 template <typename Source>
-inline void db<P>::grow_node(const_iterator hint, node_ptr dest_node, leaf_unique_ptr leaf)
+inline typename db<P>::iterator db<P>::grow_node(const_iterator hint, node_ptr dest_node,
+                                                 leaf_unique_ptr leaf)
 {
     using larger_inode = typename Source::larger_inode_type;
 
     assert(leaf->prefix_length() != 0);
     auto dst = static_cast<Source*>(dest_node);
-    if (!dst->is_full()) {
-        dst->add(std::move(leaf));
+    if (BOOST_LIKELY(!dst->is_full())) {
+        return dst->add(std::move(leaf));
     } else {
-        // Destination node is full, needs to grow
+        // Destination node is full, needs to grow. Note that just before releasing
+        // the created node to its parent, the index points to the inserted leaf.
+        leaf_type* const leaf_ptr = leaf.get();
         auto larger = make_node_ptr<larger_inode>(make_unique_node_ptr(dst), std::move(leaf));
+        iterator leaf_iter(leaf_ptr, larger->index(), larger.get());
         release_to_parent(hint, std::move(larger));
+        return leaf_iter;
     }
 }
 
@@ -201,13 +208,10 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
     // Preemptively create a leaf. This also ensures strong exception safety
     auto leaf_ptr = make_leaf_ptr(key, std::forward<Args>(args)...);
 
-    // We always return the iterator pointing to the new leaf
-    const iterator leaf_iter(leaf_ptr.get(), 0);
-
     if (BOOST_UNLIKELY(empty())) {
         assert(!hint);
         tree.root = leaf_ptr.release();
-        return leaf_iter;
+        return iterator(tree.root, 0);
     }
 
     assert(hint);
@@ -219,15 +223,15 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
         if (BOOST_UNLIKELY(pdst->match(key.first))) {
             // Not yet supported
             assert(false);
+            return iterator(hint);
         }
 
         const key_size_type min_ksize = std::min(pdst->prefix_length(), key.second);
         assert(min_ksize != 0);
 
         // Put the 2 leaves under the single inode_4
-        create_inode_4(hint, pdst->shared_prefix(key.first, min_ksize - 1), pdst,
-                       std::move(leaf_ptr));
-        return leaf_iter;
+        return create_inode_4(hint, pdst->shared_prefix(key.first, min_ksize - 1), pdst,
+                              std::move(leaf_ptr));
     }
 
     if (key.second > pdst->prefix_length()) {
@@ -236,8 +240,7 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
         const auto shared_prefix = pdst->shared_prefix(key.first);
         if (shared_prefix.second < pdst->prefix_length()) {
             // Needs to split the key prefix
-            create_inode_4(hint, shared_prefix, pdst, std::move(leaf_ptr));
-            return leaf_iter;
+            return create_inode_4(hint, shared_prefix, pdst, std::move(leaf_ptr));
         }
     }
 
@@ -246,20 +249,15 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
     // and the leaf will be added there.
     switch (dst_type) {
     case node_type::I4:
-        grow_node<inode_4>(hint, pdst, std::move(leaf_ptr));
-        break;
+        return grow_node<inode_4>(hint, pdst, std::move(leaf_ptr));
     case node_type::I16:
-        grow_node<inode_16>(hint, pdst, std::move(leaf_ptr));
-        break;
+        return grow_node<inode_16>(hint, pdst, std::move(leaf_ptr));
     case node_type::I48:
-        grow_node<inode_48>(hint, pdst, std::move(leaf_ptr));
-        break;
+        return grow_node<inode_48>(hint, pdst, std::move(leaf_ptr));
     default:
         assert(dst_type == node_type::I256);
-        static_cast<inode_256*>(pdst)->add(std::move(leaf_ptr));
+        return static_cast<inode_256*>(pdst)->add(std::move(leaf_ptr));
     }
-
-    return leaf_iter;
 }
 
 template <typename P>
@@ -287,7 +285,7 @@ inline std::pair<typename db<P>::iterator, bool> db<P>::emplace_key_args(std::fa
 
     const bool should_insert = !pos.match(bitk.first);
     return std::make_pair(should_insert ? internal_emplace(pos, bitk, std::forward<Args>(args)...)
-                                        : pos.mutable_self(),
+                                        : iterator(pos),
                           should_insert);
 }
 
@@ -359,7 +357,9 @@ template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_typ
 template <typename P> inline typename db<P>::iterator db<P>::erase(iterator pos)
 {
     if (pos != end()) {
+        const iterator next = std::next(pos);
         internal_erase(pos);
+        pos = next;
     }
     return pos;
 }

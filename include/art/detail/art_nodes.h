@@ -23,7 +23,6 @@ namespace art
 namespace detail
 {
 
-// LCOV_EXCL_START
 [[noreturn]] inline void cannot_happen(const char* file, int line, const char* func)
 {
 #ifndef NDEBUG
@@ -37,7 +36,6 @@ namespace detail
     __builtin_unreachable();
 #endif
 }
-// LCOV_EXCL_STOP
 
 #define CANNOT_HAPPEN() cannot_happen(__FILE__, __LINE__, __func__)
 
@@ -88,10 +86,8 @@ public:
         case node_type::I256:
             static_cast<const inode256_type*>(this)->dump(os);
             break;
-            // LCOV_EXCL_START
-        case node_type::LEAF:
+        default:
             CANNOT_HAPPEN();
-            // LCOV_EXCL_STOP
         }
     }
 
@@ -129,10 +125,8 @@ public:
             return static_cast<inode48_type*>(this)->delete_subtree(db_instance);
         case node_type::I256:
             return static_cast<inode256_type*>(this)->delete_subtree(db_instance);
-            // LCOV_EXCL_START
-        case node_type::LEAF:
+        default:
             CANNOT_HAPPEN();
-            // LCOV_EXCL_STOP
         }
     }
 
@@ -147,12 +141,9 @@ public:
             return static_cast<inode48_type*>(this)->find_child(key_byte);
         case node_type::I256:
             return static_cast<inode256_type*>(this)->find_child(key_byte);
-            // LCOV_EXCL_START
-        case node_type::LEAF:
+        default:
             CANNOT_HAPPEN();
         }
-        CANNOT_HAPPEN();
-        // LCOV_EXCL_STOP
     }
 
     [[nodiscard]] constexpr const_iterator leftmost_child(unsigned start) noexcept
@@ -166,25 +157,19 @@ public:
             return static_cast<inode48_type*>(this)->leftmost_child(start);
         case node_type::I256:
             return static_cast<inode256_type*>(this)->leftmost_child(start);
-            // LCOV_EXCL_START
-        case node_type::LEAF:
+        default:
             CANNOT_HAPPEN();
         }
-        CANNOT_HAPPEN();
-        // LCOV_EXCL_STOP
     }
 
     [[nodiscard]] static constexpr const_iterator leftmost_leaf(node_ptr node,
                                                                 unsigned start = 0) noexcept
     {
-        bitwise_key k{};
         const_iterator pos(node, 0);
         while (pos && pos.type() != node_type::LEAF) {
-            k.push_front(node->prefix());
             pos = static_cast<inode_type*>(pos.node())->leftmost_child(start);
             start = 0;
         }
-        pos.assign_key(k);
         return pos;
     }
 
@@ -206,9 +191,10 @@ public:
         }
     }
 
+    [[nodiscard]] constexpr std::uint8_t index() const noexcept { return parent_.second; }
     [[nodiscard]] const_iterator self_iterator() noexcept
     {
-        return const_iterator(this, pos_in_parent(), parent());
+        return const_iterator(this, index(), parent());
     }
 
     void clear_parent() noexcept { parent_ = parent_info{}; }
@@ -232,8 +218,7 @@ protected:
     {
     }
 
-    constexpr inode_type* parent() const noexcept { return parent_.first; }
-    constexpr std::uint8_t pos_in_parent() const noexcept { return parent_.second; }
+    [[nodiscard]] constexpr inode_type* parent() const noexcept { return parent_.first; }
 
     void reparent(node_ptr node, std::uint8_t index) noexcept
     {
@@ -241,6 +226,8 @@ protected:
             static_cast<inode_type*>(node)->parent_ = parent_info(this, index);
         }
     }
+
+    void leaf_index(std::uint8_t index) noexcept { parent_.second = index; }
 
 private:
     [[nodiscard]] static constexpr node_type assert_non_leaf(node_type type) noexcept
@@ -345,6 +332,7 @@ template <typename Db> class basic_inode_4 : public basic_inode_4_parent<Db>
     using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
     using node_unique_ptr = typename parent_type::node_unique_ptr;
     using const_iterator = typename Db::const_iterator;
+    using iterator = typename Db::iterator;
 
 public:
     using parent_type::basic_inode;
@@ -377,15 +365,16 @@ public:
                               keys.byte_array.cbegin() + this->children_count));
     }
 
-    void add_two_to_empty(node_ptr child1, leaf_unique_ptr&& child2) noexcept
+    iterator add_two_to_empty(node_ptr child1, leaf_unique_ptr&& child2) noexcept
     {
         const key_size_type trim = this->prefix_length();
         child1->shift_right(trim);
         child2->shift_right(trim);
-        add_two_to_empty(child1->pop_front(), child1, child2->pop_front(), std::move(child2));
+        return add_two_to_empty(child1->pop_front(), child1, child2->pop_front(),
+                                std::move(child2));
     }
 
-    constexpr void add(leaf_unique_ptr child) noexcept
+    constexpr iterator add(leaf_unique_ptr child) noexcept
     {
         assert(this->type() == basic_inode_4::static_node_type);
         assert(child->prefix_length() != 0);
@@ -418,6 +407,8 @@ public:
         this->children_count = children_count;
 
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+
+        return iterator(children[insert_pos_index], insert_pos_index, this);
     }
 
     constexpr void remove(std::uint8_t child_index) noexcept
@@ -504,7 +495,7 @@ public:
         const std::uint8_t child_index = pos.index();
         assert(pos.parent() == this && pos.node() == children[child_index]);
         children[child_index] = child;
-        this->reparent(children[child_index], child_index);
+        this->reparent(child, child_index);
     }
 
     constexpr void delete_subtree(Db& db_instance) noexcept
@@ -527,8 +518,8 @@ public:
     }
 
 protected:
-    constexpr void add_two_to_empty(std::uint8_t key1, node_ptr child1, std::uint8_t key2,
-                                    leaf_unique_ptr&& child2) noexcept
+    constexpr iterator add_two_to_empty(std::uint8_t key1, node_ptr child1, std::uint8_t key2,
+                                        leaf_unique_ptr&& child2) noexcept
     {
         assert(key1 != key2);
         assert(this->children_count == 2);
@@ -546,6 +537,8 @@ protected:
 
         assert(std::is_sorted(keys.byte_array.cbegin(),
                               keys.byte_array.cbegin() + this->children_count));
+
+        return iterator(children[key2_i], key2_i, this);
     }
 
     union {
@@ -576,6 +569,7 @@ private:
     using node_ptr = typename parent_type::node_ptr;
     using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
     using const_iterator = typename Db::const_iterator;
+    using iterator = typename Db::iterator;
 
 public:
     constexpr basic_inode_16(unique_node_ptr<inode4_type, Db> source_node,
@@ -602,6 +596,7 @@ public:
 
         keys.byte_array[i] = static_cast<std::uint8_t>(key_byte);
         children[i] = child.release();
+        this->leaf_index(i);
         ++i;
 
         for (; i <= inode4_type::capacity; ++i) {
@@ -641,7 +636,7 @@ public:
                               keys.byte_array.cbegin() + basic_inode_16::capacity));
     }
 
-    constexpr void add(leaf_unique_ptr child) noexcept
+    constexpr iterator add(leaf_unique_ptr child) noexcept
     {
         assert(this->type() == basic_inode_16::static_node_type);
         assert(child->prefix_length() != 0);
@@ -669,6 +664,8 @@ public:
         this->children_count = children_count;
 
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
+
+        return iterator(children[insert_pos_index], insert_pos_index, this);
     }
 
     constexpr void remove(std::uint8_t child_index) noexcept
@@ -796,6 +793,7 @@ template <typename Db> class basic_inode_48 : public basic_inode_48_parent<Db>
     using node_ptr = typename parent_type::node_ptr;
     using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
     using const_iterator = typename Db::const_iterator;
+    using iterator = typename Db::iterator;
 
 public:
     constexpr basic_inode_48(unique_node_ptr<inode16_type, Db> source_node,
@@ -811,8 +809,8 @@ public:
 
         // TODO(laurynas): consider AVX512 scatter?
         for (std::uint8_t i = 0; i != inode16_type::capacity; ++i) {
-            const auto existing_key_byte = source_node_ptr->keys.byte_array[i];
-            child_indices[static_cast<std::uint8_t>(existing_key_byte)] = i;
+            const std::uint8_t existing_key_byte = source_node_ptr->keys.byte_array[i];
+            child_indices[existing_key_byte] = i;
             children.pointer_array[i] = source_node_ptr->children[i];
             this->reparent(children.pointer_array[i], existing_key_byte);
         }
@@ -821,6 +819,7 @@ public:
         assert(child_indices[key_byte] == empty_child);
         child_indices[key_byte] = inode16_type::capacity;
         children.pointer_array[inode16_type::capacity] = child.release();
+        this->leaf_index(key_byte);
 
         std::fill(std::next(children.pointer_array.begin(), inode16_type::capacity + 1),
                   children.pointer_array.end(), nullptr);
@@ -849,7 +848,7 @@ public:
         }
     }
 
-    constexpr void add(leaf_unique_ptr child) noexcept
+    constexpr iterator add(leaf_unique_ptr child) noexcept
     {
         assert(this->type() == basic_inode_48::static_node_type);
         assert(child->prefix_length() != 0);
@@ -894,6 +893,8 @@ public:
         child_indices[key_byte] = static_cast<std::uint8_t>(i);
         children.pointer_array[i] = child.release();
         ++this->children_count;
+
+        return iterator(children.pointer_array[i], key_byte, this);
     }
 
     [[nodiscard]] constexpr const_iterator leftmost_child(unsigned start) noexcept
@@ -1001,6 +1002,7 @@ template <typename Db> class basic_inode_256 : public basic_inode_256_parent<Db>
     using node_ptr = typename parent_type::node_ptr;
     using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
     using const_iterator = typename Db::const_iterator;
+    using iterator = typename Db::iterator;
 
 public:
     constexpr basic_inode_256(unique_node_ptr<inode48_type, Db> source_node,
@@ -1032,9 +1034,10 @@ public:
         const auto key_byte = child->pop_front();
         assert(children[key_byte] == nullptr);
         children[key_byte] = child.release();
+        this->leaf_index(key_byte);
     }
 
-    constexpr void add(leaf_unique_ptr child) noexcept
+    constexpr iterator add(leaf_unique_ptr child) noexcept
     {
         assert(this->type() == basic_inode_256::static_node_type);
         assert(!this->is_full());
@@ -1044,6 +1047,8 @@ public:
         assert(children[key_byte] == nullptr);
         children[key_byte] = child.release();
         ++this->children_count;
+
+        return iterator(children[key_byte], key_byte, this);
     }
 
     constexpr void remove(std::uint8_t child_index) noexcept
@@ -1057,15 +1062,14 @@ public:
 
     [[nodiscard]] constexpr const_iterator find_child(std::uint8_t key_byte) noexcept
     {
-        const auto key_int_byte = static_cast<std::uint8_t>(key_byte);
-        if (children[key_int_byte] != nullptr)
-            return const_iterator(children[key_int_byte], key_int_byte, this);
+        if (children[key_byte] != nullptr)
+            return const_iterator(children[key_byte], key_byte, this);
         return const_iterator{};
     }
 
     [[nodiscard]] constexpr const_iterator leftmost_child(unsigned key_byte) noexcept
     {
-        for (; key_byte < children.size(); ++key_byte) {
+        for (; key_byte != children.size(); ++key_byte) {
             if (children[key_byte] != nullptr)
                 return const_iterator(children[key_byte], key_byte, this);
         }
@@ -1074,10 +1078,10 @@ public:
 
     constexpr void replace(const_iterator pos, node_ptr child) noexcept
     {
-        const std::uint8_t key_int_byte = pos.index();
-        assert(pos.parent() == this && pos.node() == children[key_int_byte]);
-        children[key_int_byte] = child;
-        this->reparent(children[key_int_byte], key_int_byte);
+        const std::uint8_t key_byte = pos.index();
+        assert(pos.parent() == this && pos.node() == children[key_byte]);
+        children[key_byte] = child;
+        this->reparent(child, key_byte);
     }
 
     template <typename Function>

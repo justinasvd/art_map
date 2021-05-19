@@ -50,11 +50,7 @@ template <> struct bitwise_compare<comparison_ops::less_tag> {
         // Flip bytes to Big Endian order (no-op on Big Endian architectures)
         return boost::endian::native_to_big(k);
     }
-
-    template <typename T> [[nodiscard]] inline static constexpr T unpack(T k) noexcept
-    {
-        return boost::endian::big_to_native(k);
-    }
+    template <typename T> [[nodiscard]] inline static constexpr T unpack(T k) noexcept { return k; }
 };
 
 template <> struct bitwise_compare<comparison_ops::greater_tag> {
@@ -63,6 +59,7 @@ template <> struct bitwise_compare<comparison_ops::greater_tag> {
         // Flip bytes to Little Endian order (no-op on Little Endian architectures)
         return boost::endian::native_to_little(k);
     }
+    template <typename T> [[nodiscard]] inline static constexpr T unpack(T k) noexcept { return k; }
 };
 
 template <typename Ptr, typename Order> struct ptr_bitwise_compare {

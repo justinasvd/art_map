@@ -101,7 +101,7 @@ public:
     key_compare key_comp() const { return key_compare(); }
 
     // Iterator routines.
-    iterator begin() noexcept { return cbegin().mutable_self(); };
+    iterator begin() noexcept { return iterator(cbegin()); };
     const_iterator cbegin() const noexcept { return inode::leftmost_leaf(tree.root); }
     const_iterator begin() const noexcept { return cbegin(); }
 
@@ -121,7 +121,7 @@ public:
     bool empty() const noexcept { return tree.root == nullptr; }
 
     // Lookup routines
-    iterator find(fast_key_type key) noexcept { return internal_find(key).mutable_self(); }
+    iterator find(fast_key_type key) noexcept { return iterator(internal_find(key)); }
     const_iterator find(fast_key_type key) const noexcept { return internal_find(key); }
 
     iterator lower_bound(fast_key_type key) noexcept;
@@ -322,11 +322,11 @@ private:
 
     template <typename NodePtr> void release_to_parent(const_iterator hint, NodePtr child) noexcept;
 
-    void create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix, node_ptr pdst,
-                        leaf_unique_ptr leaf);
+    iterator create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix, node_ptr pdst,
+                            leaf_unique_ptr leaf);
 
     template <typename Source>
-    void grow_node(const_iterator hint, node_ptr dest_node, leaf_unique_ptr leaf);
+    iterator grow_node(const_iterator hint, node_ptr dest_node, leaf_unique_ptr leaf);
 
     // Functions to convert a node to a smaller type of node. This allows to fully
     // generalize the shrinking routine without stooping to strange hacks.

@@ -18,6 +18,9 @@ template <typename Traits> class db;
 
 template <typename Traits, typename Node, typename INode> class tree_iterator
 {
+    using bitwise_key = typename Traits::bitwise_key;
+    using key_size_type = typename bitwise_key::size_type;
+
     static constexpr bool is_const = std::is_const<Traits>::value;
     using fast_key_type = typename Traits::fast_key_type;
     using real_leaf_type = typename Traits::leaf_type;
@@ -45,15 +48,26 @@ public:
     using difference_type = typename Traits::difference_type;
     using iterator_category = std::bidirectional_iterator_tag;
 
+    // Uninitialized iterator
     constexpr tree_iterator() noexcept = default;
 
     // Default copy c-tor is fine
     tree_iterator(const tree_iterator& rhs) noexcept = default;
 
+    // Enable copy construction between const and non-const iterators
+    template <typename OtherTraits,
+              typename = typename std::is_same<std::remove_cv_t<Traits>,
+                                               std::remove_cv_t<OtherTraits>>::type>
+    explicit constexpr tree_iterator(const tree_iterator<OtherTraits, Node, INode>& rhs) noexcept
+        : node_(rhs.node())
+        , parent_(rhs.parent())
+        , pos_in_parent(rhs.index())
+    {
+    }
+
     constexpr tree_iterator(Node* node, unsigned int index, INode* parent = nullptr) noexcept
         : node_(node)
         , parent_(parent)
-        , key_{}
         , pos_in_parent(index)
     {
     }
@@ -107,18 +121,8 @@ public:
 private:
     using traits_type = std::remove_const_t<Traits>;
 
-    using bitwise_key = typename Traits::bitwise_key;
-    using key_size_type = typename bitwise_key::size_type;
-
-    using mutable_tree_iterator = tree_iterator<traits_type, Node, INode>;
-
     friend INode;
     friend db<traits_type>;
-
-    [[nodiscard]] mutable_tree_iterator mutable_self() const noexcept
-    {
-        return mutable_tree_iterator(node_, pos_in_parent, parent_);
-    }
 
     [[nodiscard]] node_type type() const noexcept { return node_->type(); }
 
@@ -140,7 +144,7 @@ private:
     [[nodiscard]] reference iter_deref() const noexcept
     {
         assert(is_leaf(node_));
-        return Traits::value_ref(key_.unpack(), static_cast<leaf_type*>(node_)->value());
+        // return Traits::value_ref(key_.unpack(), static_cast<leaf_type*>(node_)->value());
     }
 
     void increment() noexcept
@@ -199,15 +203,11 @@ private:
         //     }
     }
 
-    void assign_key(bitwise_key k) noexcept { key_ = k; }
-
 private:
     // The node in the tree the iterator is pointing at
     Node* node_;
     // Parent of the current node. Also, the position below is within this parent
     INode* parent_;
-    // Current key
-    bitwise_key key_;
     // The position within the parent node of the node.
     unsigned int pos_in_parent;
 };
