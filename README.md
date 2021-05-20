@@ -17,10 +17,9 @@ which `unodb` does not try to do.
 There are limits to what kinds of keys can be used in ART. Keys must be
 transformable to `BitwiseComparable`, maintaining the order imposed by
 `std::less<Key>` or `std::greater<Key>`. Such transformations for integral
-key types, pointers and `std::string` (in `std::less<std::string>` case)
-are already provided. In theory, it is possible to provide bitwise orderings
-for floating point types and, perhaps, composite types as well. We have not
-ventured there. Patches welcome.
+key types and pointers are already provided. In theory, it is possible to 
+provide bitwise orderings for floating point types and, perhaps, composite 
+types as well. We have not ventured there. Patches welcome.
 
 Also, insertions and deletions on an Adaptive Radix Tree can cause nodes to resize.
 The result is that insertions and deletions can invalidate iterators

@@ -35,18 +35,6 @@ struct container_traits {
     using leaf_type = basic_leaf<header_type, mapped_type, allocator_type>;
 };
 
-// Fast argument type
-template <typename T> struct fast_const_argument {
-    using const_reference = std::add_lvalue_reference_t<std::add_const_t<T>>;
-
-    // Sufficiently small trivially copyable types are passed by value
-    using type = std::conditional_t<std::is_trivially_copyable<T>::value &&
-                                        sizeof(T) <= sizeof(const_reference),
-                                    T, const_reference>;
-};
-
-template <typename T> using fast_const_argument_t = typename fast_const_argument<T>::type;
-
 } // namespace detail
 } // namespace art
 

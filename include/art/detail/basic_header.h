@@ -13,6 +13,12 @@ template <typename BitwiseKey> struct basic_header final {
     using bitwise_key = BitwiseKey;
     using key_size_type = typename BitwiseKey::size_type;
 
+    explicit constexpr basic_header(bitwise_key key) noexcept
+        : key_(key)
+        , size_(key.max_size())
+    {
+    }
+
     constexpr basic_header(bitwise_key key, key_size_type key_size) noexcept
         : key_(key)
         , size_(key_size)

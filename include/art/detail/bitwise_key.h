@@ -50,7 +50,10 @@ template <> struct bitwise_compare<comparison_ops::less_tag> {
         // Flip bytes to Big Endian order (no-op on Big Endian architectures)
         return boost::endian::native_to_big(k);
     }
-    template <typename T> [[nodiscard]] inline static constexpr T unpack(T k) noexcept { return k; }
+    template <typename T> [[nodiscard]] inline static constexpr T unpack(T k) noexcept
+    {
+        return boost::endian::big_to_native(k);
+    }
 };
 
 template <> struct bitwise_compare<comparison_ops::greater_tag> {
@@ -59,7 +62,10 @@ template <> struct bitwise_compare<comparison_ops::greater_tag> {
         // Flip bytes to Little Endian order (no-op on Little Endian architectures)
         return boost::endian::native_to_little(k);
     }
-    template <typename T> [[nodiscard]] inline static constexpr T unpack(T k) noexcept { return k; }
+    template <typename T> [[nodiscard]] inline static constexpr T unpack(T k) noexcept
+    {
+        return boost::endian::little_to_native(k);
+    }
 };
 
 template <typename Ptr, typename Order> struct ptr_bitwise_compare {
@@ -69,6 +75,10 @@ template <typename Ptr, typename Order> struct ptr_bitwise_compare {
     [[nodiscard]] inline static constexpr std::uintptr_t byte_swap(Ptr k) noexcept
     {
         return compare_t::byte_swap(reinterpret_cast<std::uintptr_t>(k));
+    }
+    [[nodiscard]] inline static constexpr Ptr unpack(std::uintptr_t k) noexcept
+    {
+        return reinterpret_cast<Ptr>(compare_t::unpack(k));
     }
 };
 
@@ -81,18 +91,22 @@ template <typename Int, typename UInt, typename Order> struct int_bitwise_compar
     {
         return compare_t::byte_swap(static_cast<UInt>(-k));
     }
+    [[nodiscard]] inline static constexpr Int unpack(UInt k) noexcept
+    {
+        return -static_cast<Int>(compare_t::unpack(k));
+    }
 };
 
 // Bitwise key is already pretty well laid out, but we pack it so that
 // the greedy compiler would not waste more memory than strictly necessary
 // in leaves and internal nodes. This packing shaves off 8 bytes for each leaf,
 // with negligible effect on overall performance.
-template <typename T, typename Key, typename Policy>
-struct __attribute__((__packed__)) unsigned_integral_bitwise_key {
+template <typename T, typename Key, typename Policy> struct unsigned_integral_bitwise_key {
     static_assert(std::is_unsigned<Key>::value && std::is_integral<Key>::value,
                   "Unsupported unsigned integral key type");
     static_assert(sizeof(T) == sizeof(Key), "Invalid key size");
 
+    using key_type = T;
     using size_type = std::uint8_t;
     static constexpr size_type num_bytes = sizeof(Key);
 
@@ -104,16 +118,16 @@ struct __attribute__((__packed__)) unsigned_integral_bitwise_key {
     {
     }
 
-    [[nodiscard]] bool match(unsigned_integral_bitwise_key other) const noexcept
-    {
-        return key.bitkey == other.key.bitkey;
-    }
-
     // Internal nodes use partial keys
     [[nodiscard]] std::uint8_t operator[](size_type index) const noexcept
     {
         assert(index < num_bytes);
         return key.bytes[index];
+    }
+
+    bool operator==(unsigned_integral_bitwise_key rhs) const noexcept
+    {
+        return key.bitkey == rhs.key.bitkey;
     }
 
     [[nodiscard]] constexpr std::uint8_t front() const noexcept { return key.bytes[0]; }
@@ -154,7 +168,7 @@ struct __attribute__((__packed__)) unsigned_integral_bitwise_key {
                                              std::false_type());
     }
 
-    T unpack() const noexcept { return Policy::unpack(key.bitkey); }
+    [[nodiscard]] key_type unpack() const noexcept { return Policy::unpack(key.bitkey); }
 
 private:
     // Non-byte-swapping constructor

@@ -253,8 +253,8 @@ private:
     [[nodiscard]] const_iterator internal_find(fast_key_type key) const noexcept;
 
     template <typename... Args>
-    [[nodiscard]] iterator internal_emplace(const_iterator hint, const bitwise_key_prefix& key,
-                                            Args&&... args);
+    [[nodiscard]] iterator internal_emplace(const_iterator hint, fast_key_type original_key,
+                                            bitwise_key_prefix& key, Args&&... args);
 
     template <typename... Args>
     [[nodiscard]] iterator emplace_key_args(std::true_type, fast_key_type key, Args&&... args);
@@ -310,7 +310,7 @@ private:
 
     // Leaf creation/deallocation
     template <typename... Args>
-    [[nodiscard]] leaf_unique_ptr make_leaf_ptr(const bitwise_key_prefix& key, Args&&... args);
+    [[nodiscard]] leaf_unique_ptr make_leaf_ptr(fast_key_type key, Args&&... args);
 
     template <typename Node> void deallocate_node(Node* node) noexcept;
     void deallocate(inode_4* node) noexcept { deallocate_node(node); }
@@ -322,11 +322,13 @@ private:
 
     template <typename NodePtr> void release_to_parent(const_iterator hint, NodePtr child) noexcept;
 
-    iterator create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix, node_ptr pdst,
-                            leaf_unique_ptr leaf);
+    template <typename NodePtr>
+    iterator create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix, NodePtr pdst,
+                            leaf_unique_ptr leaf, key_size_type rem);
 
     template <typename Source>
-    iterator grow_node(const_iterator hint, node_ptr dest_node, leaf_unique_ptr leaf);
+    iterator grow_node(const_iterator hint, node_ptr dest_node, leaf_unique_ptr leaf,
+                       std::uint8_t key_byte);
 
     // Functions to convert a node to a smaller type of node. This allows to fully
     // generalize the shrinking routine without stooping to strange hacks.

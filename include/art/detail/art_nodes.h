@@ -365,25 +365,31 @@ public:
                               keys.byte_array.cbegin() + this->children_count));
     }
 
-    iterator add_two_to_empty(node_ptr child1, leaf_unique_ptr&& child2) noexcept
+    iterator add_two_to_empty(node_ptr child1, leaf_unique_ptr child2,
+                              std::uint8_t key_byte) noexcept
     {
-        const key_size_type trim = this->prefix_length();
-        child1->shift_right(trim);
-        child2->shift_right(trim);
-        return add_two_to_empty(child1->pop_front(), child1, child2->pop_front(),
+        assert(child1->type() != node_type::LEAF);
+        child1->shift_right(this->prefix_length());
+        const std::uint8_t child1_key = child1->front();
+        child1->shift_right(1); // Consume front byte
+        return add_two_to_empty(child1_key, child1, key_byte, std::move(child2));
+    }
+
+    iterator add_two_to_empty(leaf_type* child1, leaf_unique_ptr child2,
+                              key_size_type offset) noexcept
+    {
+        const key_size_type trim = offset + this->prefix_length();
+        return add_two_to_empty(child1->key()[trim], child1, child2->key()[trim],
                                 std::move(child2));
     }
 
-    constexpr iterator add(leaf_unique_ptr child) noexcept
+    constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(this->type() == basic_inode_4::static_node_type);
-        assert(child->prefix_length() != 0);
 
         auto children_count = this->children_count;
 
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
-
-        const auto key_byte = child->pop_front();
 
         const auto first_lt = ((keys.integer & 0xFFU) < key_byte) ? 1 : 0;
         const auto second_lt = (((keys.integer >> 8U) & 0xFFU) < key_byte) ? 1 : 0;
@@ -444,9 +450,11 @@ public:
         const std::uint8_t child_to_leave = 1 - child_to_delete;
         const auto child_to_leave_ptr = children[child_to_leave];
 
-        // Now we have to prepend inode_4's prefix to the last remaining node
-        child_to_leave_ptr->push_front(keys.byte_array[child_to_leave]);
-        child_to_leave_ptr->push_front(this->prefix());
+        if (child_to_leave_ptr->type() != node_type::LEAF) {
+            // Now we have to prepend inode_4's prefix to the last remaining node
+            child_to_leave_ptr->push_front(keys.byte_array[child_to_leave]);
+            child_to_leave_ptr->push_front(this->prefix());
+        }
         return db_instance.make_unique_node_ptr(child_to_leave_ptr);
     }
 
@@ -565,20 +573,16 @@ private:
     using inode4_type = typename parent_type::inode4_type;
     using inode16_type = typename parent_type::inode16_type;
     using inode48_type = typename parent_type::inode48_type;
-    using leaf_type = typename parent_type::leaf_type;
     using node_ptr = typename parent_type::node_ptr;
     using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
     using const_iterator = typename Db::const_iterator;
     using iterator = typename Db::iterator;
 
 public:
-    constexpr basic_inode_16(unique_node_ptr<inode4_type, Db> source_node,
-                             leaf_unique_ptr child) noexcept
+    constexpr basic_inode_16(unique_node_ptr<inode4_type, Db> source_node, leaf_unique_ptr child,
+                             std::uint8_t key_byte) noexcept
         : parent_type(*source_node)
     {
-        assert(child->prefix_length() != 0);
-        const auto key_byte = child->pop_front();
-
         const auto keys_integer = source_node->keys.integer;
         const auto first_lt = ((keys_integer & 0xFFU) < key_byte) ? 1 : 0;
         const auto second_lt = (((keys_integer >> 8U) & 0xFFU) < key_byte) ? 1 : 0;
@@ -636,12 +640,10 @@ public:
                               keys.byte_array.cbegin() + basic_inode_16::capacity));
     }
 
-    constexpr iterator add(leaf_unique_ptr child) noexcept
+    constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(this->type() == basic_inode_16::static_node_type);
-        assert(child->prefix_length() != 0);
 
-        const auto key_byte = child->pop_front();
         auto children_count = this->children_count;
 
         const auto insert_pos_index = get_sorted_key_array_insert_position(key_byte);
@@ -796,8 +798,8 @@ template <typename Db> class basic_inode_48 : public basic_inode_48_parent<Db>
     using iterator = typename Db::iterator;
 
 public:
-    constexpr basic_inode_48(unique_node_ptr<inode16_type, Db> source_node,
-                             leaf_unique_ptr child) noexcept
+    constexpr basic_inode_48(unique_node_ptr<inode16_type, Db> source_node, leaf_unique_ptr child,
+                             std::uint8_t key_byte) noexcept
         : parent_type(*source_node)
     {
         auto* const __restrict__ source_node_ptr = source_node.get();
@@ -815,7 +817,6 @@ public:
             this->reparent(children.pointer_array[i], existing_key_byte);
         }
 
-        const auto key_byte = child->pop_front();
         assert(child_indices[key_byte] == empty_child);
         child_indices[key_byte] = inode16_type::capacity;
         children.pointer_array[inode16_type::capacity] = child.release();
@@ -848,12 +849,10 @@ public:
         }
     }
 
-    constexpr iterator add(leaf_unique_ptr child) noexcept
+    constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(this->type() == basic_inode_48::static_node_type);
-        assert(child->prefix_length() != 0);
 
-        const auto key_byte = child->pop_front();
         assert(child_indices[key_byte] == empty_child);
         unsigned i{0};
 #if defined(__SSE4_2__)
@@ -1005,12 +1004,10 @@ template <typename Db> class basic_inode_256 : public basic_inode_256_parent<Db>
     using iterator = typename Db::iterator;
 
 public:
-    constexpr basic_inode_256(unique_node_ptr<inode48_type, Db> source_node,
-                              leaf_unique_ptr child) noexcept
+    constexpr basic_inode_256(unique_node_ptr<inode48_type, Db> source_node, leaf_unique_ptr child,
+                              std::uint8_t key_byte) noexcept
         : parent_type(*source_node)
     {
-        assert(child->prefix_length() != 0);
-
         unsigned children_copied = 0;
         unsigned i = 0;
         while (true) {
@@ -1031,19 +1028,16 @@ public:
         for (; i < basic_inode_256::capacity; ++i)
             children[i] = nullptr;
 
-        const auto key_byte = child->pop_front();
         assert(children[key_byte] == nullptr);
         children[key_byte] = child.release();
         this->leaf_index(key_byte);
     }
 
-    constexpr iterator add(leaf_unique_ptr child) noexcept
+    constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(this->type() == basic_inode_256::static_node_type);
         assert(!this->is_full());
-        assert(child->prefix_length() != 0);
 
-        const auto key_byte = child->pop_front();
         assert(children[key_byte] == nullptr);
         children[key_byte] = child.release();
         ++this->children_count;

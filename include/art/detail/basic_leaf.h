@@ -2,6 +2,7 @@
 #define ART_DETAIL_BASIC_LEAF_HEADER_INCLUDED
 
 #include "art_node_base.h"
+#include "fast_const_argument.h"
 
 #include <memory>
 #include <type_traits>
@@ -20,9 +21,11 @@ struct basic_leaf final : public art_node_base<Header> {
     using bitwise_key = typename Header::bitwise_key;
     using key_size_type = typename bitwise_key::size_type;
     using parent_type = art_node_base<Header>;
+    using key_type = typename bitwise_key::key_type;
+    using fast_key_type = fast_const_argument_t<key_type>;
 
-    constexpr basic_leaf(bitwise_key key, key_size_type key_size) noexcept
-        : parent_type(node_type::LEAF, key, key_size)
+    explicit constexpr basic_leaf(fast_key_type key) noexcept
+        : parent_type(node_type::LEAF, bitwise_key(key))
     {
     }
 
@@ -61,9 +64,11 @@ struct basic_leaf<Header, std::integral_constant<T, V>, Alloc> final
     using bitwise_key = typename Header::bitwise_key;
     using key_size_type = typename bitwise_key::size_type;
     using parent_type = art_node_base<Header>;
+    using key_type = typename bitwise_key::key_type;
+    using fast_key_type = fast_const_argument_t<key_type>;
 
-    constexpr basic_leaf(bitwise_key key, key_size_type key_size) noexcept
-        : parent_type(node_type::LEAF, key, key_size)
+    explicit constexpr basic_leaf(fast_key_type key) noexcept
+        : parent_type(node_type::LEAF, bitwise_key(key))
     {
     }
 

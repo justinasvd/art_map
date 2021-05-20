@@ -287,7 +287,7 @@ GENERATE_BENCHMARKS(set<int>);
 GENERATE_BENCHMARKS(map<int, std::string>);
 // GENERATE_BENCHMARKS(set<int*>);
 // GENERATE_BENCHMARKS(map<int*, std::string>);
-// GENERATE_BENCHMARKS(set<std::uint64_t>);
-// GENERATE_BENCHMARKS(map<std::uint64_t, std::string>);
+GENERATE_BENCHMARKS(set<std::uint64_t>);
+GENERATE_BENCHMARKS(map<std::uint64_t, std::string>);
 
 BENCHMARK_MAIN();
