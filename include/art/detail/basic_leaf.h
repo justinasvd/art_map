@@ -47,6 +47,8 @@ struct basic_leaf final : public art_node_base<Header> {
     [[nodiscard]] T& value() noexcept { return *addr(); }
     [[nodiscard]] const T& value() const noexcept { return *addr(); }
 
+    [[noreturn]] static void push_back(T&&) { throw std::runtime_error("basic_leaf: push_back"); }
+
 private:
     [[nodiscard]] T* addr() noexcept { return reinterpret_cast<T*>(&data); }
     [[nodiscard]] const T* addr() const noexcept { return reinterpret_cast<const T*>(&data); }
@@ -81,6 +83,11 @@ struct basic_leaf<Header, std::integral_constant<T, V>, Alloc> final
 
     // Simply return a value
     [[nodiscard]] static constexpr value_type value() noexcept { return value_type(); }
+
+    [[noreturn]] static void push_back(value_type)
+    {
+        throw std::runtime_error("basic_leaf: push_back");
+    }
 };
 
 } // namespace detail

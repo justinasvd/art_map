@@ -20,6 +20,7 @@ int main()
         assert(p.first->first == key && p.first->second == value);
         p = db.insert(std::make_pair(key, value));
         assert(!p.second);
+        assert(p.first->first == key && p.first->second == value);
     }
 
     db.emplace(181819, 1);

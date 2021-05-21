@@ -28,18 +28,17 @@ inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix&
 
     if (pos) {
         while (pos.type() != node_type::LEAF) {
-            const unsigned prefix_length = pos.prefix_length();
+            const key_size_type prefix_length = pos.prefix_length();
             if (key.second <= prefix_length || pos.shared_prefix_length(key.first) < prefix_length)
                 break;
-            shift_right(key, prefix_length);
 
-            const auto child = inode_cast(pos.node())->find_child(key.first.front());
+            const auto child = inode_cast(pos.node())->find_child(key.first[prefix_length]);
             if (!child)
                 break;
             pos = child;
 
-            // We have consumed one byte during the child lookup
-            shift_right(key, 1);
+            // Consume the explored prefix + 1 byte used during child lookup
+            shift_right(key, prefix_length + 1);
         }
     }
 
@@ -203,7 +202,8 @@ template <typename P>
 template <typename... Args>
 inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
                                                         fast_key_type original_key,
-                                                        bitwise_key_prefix& key, Args&&... args)
+                                                        const bitwise_key_prefix& key,
+                                                        Args&&... args)
 {
     assert(key.first.max_size() >= key.second);
 
@@ -226,8 +226,7 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
 
         // Can only happen in multivalued container case
         if (BOOST_UNLIKELY(pdst->key() == leaf_ptr->key())) {
-            // Not yet supported
-            assert(false);
+            pdst->push_back(std::move(leaf_ptr->value()));
             return iterator(hint);
         }
 
@@ -238,21 +237,21 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
 
     // Some other node, not a leaf
     const node_ptr pdst = hint.node();
+    const key_size_type prefix_len = pdst->prefix_length();
 
-    if (key.second > pdst->prefix_length()) {
-        // Directly compute shared prefix. This eliminates computing shared
-        // prefix length twice.
+    // If the prefix is not fully shared, split the prefix
+    {
         const auto shared_prefix = pdst->shared_prefix(key.first);
-        if (shared_prefix.second < pdst->prefix_length()) {
-            // Needs to split the key prefix
-            shift_right(key, shared_prefix.second);
+        if (shared_prefix.second < prefix_len) {
             return create_inode_4(hint, shared_prefix, pdst, std::move(leaf_ptr),
-                                  key.first.front());
+                                  key.first[shared_prefix.second]);
         }
     }
 
-    // We have computed the key byte for this leaf. Pass it on to the nodes
-    const std::uint8_t key_byte = key.first.front();
+    assert(key.second > prefix_len);
+
+    // Key byte for this leaf. Pass it on to the nodes
+    const std::uint8_t key_byte = key.first[prefix_len];
 
     // Add the newly created leaf to the proper node.
     // If that node is full, then a new larger node will be created,

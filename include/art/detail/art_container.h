@@ -254,7 +254,7 @@ private:
 
     template <typename... Args>
     [[nodiscard]] iterator internal_emplace(const_iterator hint, fast_key_type original_key,
-                                            bitwise_key_prefix& key, Args&&... args);
+                                            const bitwise_key_prefix& key, Args&&... args);
 
     template <typename... Args>
     [[nodiscard]] iterator emplace_key_args(std::true_type, fast_key_type key, Args&&... args);
