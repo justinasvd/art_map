@@ -383,7 +383,7 @@ public:
                                 std::move(child2));
     }
 
-    constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
+    [[nodiscard]] constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(this->type() == basic_inode_4::static_node_type);
 
@@ -452,8 +452,8 @@ public:
 
         if (child_to_leave_ptr->type() != node_type::LEAF) {
             // Now we have to prepend inode_4's prefix to the last remaining node
-            child_to_leave_ptr->push_front(keys.byte_array[child_to_leave]);
-            child_to_leave_ptr->push_front(this->prefix());
+            child_to_leave_ptr->shift_left(keys.byte_array[child_to_leave]);
+            child_to_leave_ptr->shift_left(this->prefix());
         }
         return db_instance.make_unique_node_ptr(child_to_leave_ptr);
     }
@@ -640,7 +640,7 @@ public:
                               keys.byte_array.cbegin() + basic_inode_16::capacity));
     }
 
-    constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
+    [[nodiscard]] constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(this->type() == basic_inode_16::static_node_type);
 
@@ -1033,7 +1033,7 @@ public:
         this->leaf_index(key_byte);
     }
 
-    constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
+    [[nodiscard]] constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(this->type() == basic_inode_256::static_node_type);
         assert(!this->is_full());

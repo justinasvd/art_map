@@ -47,7 +47,7 @@ template <typename C> inline void fwditer(benchmark::State& state)
     auto it = container.begin();
 
     for (auto _ : state) {
-        do_not_optimize(&it);
+        do_not_optimize(*it);
         if (++it == container.end())
             it = container.begin();
     }
@@ -84,7 +84,9 @@ template <typename C> void find(benchmark::State& state)
     auto it = values.begin();
     for (auto _ : state) {
         auto r = container.find(test::key_of_value(*it));
-        do_not_optimize(&r);
+        assert(r != container.end());
+        assert(test::key_of_value(*r) == test::key_of_value(*it));
+        do_not_optimize(*r);
         if (++it == values.end())
             it = values.begin();
     }
@@ -109,7 +111,7 @@ template <typename C> void find_sorted(benchmark::State& state)
     auto it = values.begin();
     for (auto _ : state) {
         auto r = container.find(test::key_of_value(*it));
-        do_not_optimize(&r);
+        do_not_optimize(*r);
         if (++it == values.end())
             it = values.begin();
     }
@@ -125,123 +127,17 @@ template <typename C> inline void erase(benchmark::State& state)
     for (auto _ : state) {
         // Remove
         std::size_t count = container.erase(test::key_of_value(*it));
+        assert(count == 1);
         do_not_optimize(count);
 
         // Reinsert values
         if (++it == values.end()) {
             state.PauseTiming();
             it = values.begin();
+            assert(container.empty());
             container.insert(values.begin(), values.end());
             state.ResumeTiming();
         }
-    }
-}
-
-// Benchmark steady-state insert (into first half of range) and remove
-// (from second second half of range), treating the container
-// approximately like a queue with log-time access for all elements.
-// This benchmark does not test the case where insertion and removal
-// happen in the same region of the tree.  This benchmark counts two
-// value constructors.
-template <typename C> void queue_addrem(benchmark::State& state)
-{
-    // typedef typename std::remove_const<typename T::value_type>::type V;
-    // typename KeyOfValue<typename T::key_type, V>::type key_of_value;
-
-    // // Disable timing while we perform some initialization.
-    // state.PauseTiming();
-    // assert(max_values % 2 == 0);
-
-    // T container;
-
-    // const int half = max_values / 2;
-    // vector<int> remove_keys(half);
-    // vector<int> add_keys(half);
-
-    // for (int i = 0; i < half; i++) {
-    //     remove_keys[i] = i;
-    //     add_keys[i] = i;
-    // }
-
-    // RandGen rand(FLAGS_test_random_seed);
-
-    // random_shuffle(remove_keys.begin(), remove_keys.end(), rand);
-    // random_shuffle(add_keys.begin(), add_keys.end(), rand);
-
-    // Generator<V> g(max_values + FLAGS_benchmark_max_iters);
-
-    // for (int i = 0; i < half; i++) {
-    //     container.insert(g(add_keys[i]));
-    //     container.insert(g(half + remove_keys[i]));
-    // }
-
-    // // There are three parts each of size "half":
-    // // 1 is being deleted from  [offset - half, offset)
-    // // 2 is standing            [offset, offset + half)
-    // // 3 is being inserted into [offset + half, offset + 2 * half)
-    // int offset = 0;
-
-    for (auto _ : state) {
-        // int idx = i % half;
-
-        // if (idx == 0) {
-        //     state.PauseTiming();
-        //     random_shuffle(remove_keys.begin(), remove_keys.end(), rand);
-        //     random_shuffle(add_keys.begin(), add_keys.end(), rand);
-        //     offset += half;
-        //     state.ResumeTiming();
-        // }
-
-        // int e = container.erase(key_of_value(g(offset - half + remove_keys[idx])));
-        // assert(e == 1);
-        // container.insert(g(offset + half + add_keys[idx]));
-    }
-}
-
-// Mixed insertion and deletion in the same range using pre-constructed values.
-template <typename C> void mixed_addrem(benchmark::State& state)
-{
-    // typedef typename std::remove_const<typename T::value_type>::type V;
-    // typename KeyOfValue<typename T::key_type, V>::type key_of_value;
-
-    // // Disable timing while we perform some initialization.
-    // state.PauseTiming();
-    // assert(max_values % 2 == 0);
-
-    // T container;
-    // RandGen rand(FLAGS_test_random_seed);
-
-    // vector<V> values = GenerateValues<V>(max_values * 2);
-
-    // // Create two random shuffles
-    // vector<int> remove_keys(max_values);
-    // vector<int> add_keys(max_values);
-
-    // // Insert the first half of the values (already in random order)
-    // for (int i = 0; i < max_values; i++) {
-    //     container.insert(values[i]);
-
-    //     // remove_keys and add_keys will be swapped before each round,
-    //     // therefore fill add_keys here w/ the keys being inserted, so
-    //     // they'll be the first to be removed.
-    //     remove_keys[i] = i + max_values;
-    //     add_keys[i] = i;
-    // }
-
-    for (auto _ : state) {
-        // int idx = i % max_values;
-
-        // if (idx == 0) {
-        //     state.PauseTiming();
-        //     remove_keys.swap(add_keys);
-        //     random_shuffle(remove_keys.begin(), remove_keys.end(), rand);
-        //     random_shuffle(add_keys.begin(), add_keys.end(), rand);
-        //     state.ResumeTiming();
-        // }
-
-        // int e = container.erase(key_of_value(values[remove_keys[idx]]));
-        // assert(e == 1);
-        // container.insert(values[add_keys[idx]]);
     }
 }
 
@@ -278,9 +174,7 @@ template <typename C> inline void fifo(benchmark::State& state)
     GENERATE_BENCH_SET(find_sorted, Container, __VA_ARGS__);                                       \
     GENERATE_BENCH_SET(insert, Container, __VA_ARGS__);                                            \
     GENERATE_BENCH_SET(erase, Container, __VA_ARGS__);                                             \
-    /*GENERATE_BENCH_SET(queue_addrem, Container, __VA_ARGS__);                                    \
-    GENERATE_BENCH_SET(mixed_addrem, Container, __VA_ARGS__);                                      \
-    GENERATE_BENCH_SET(fifo, Container, __VA_ARGS__)*/                                             \
+    GENERATE_BENCH_SET(fifo, Container, __VA_ARGS__)                                               \
     /**/
 
 GENERATE_BENCHMARKS(set<int>);

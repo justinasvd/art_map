@@ -41,16 +41,16 @@ template <typename BitwiseKey> struct basic_header final {
         size_ -= size;
     }
 
-    constexpr void push_front(std::uint8_t key) noexcept
+    constexpr void shift_left(std::uint8_t key) noexcept
     {
         assert(size_ + 1 <= key_.max_size());
-        key_.push_front(key);
+        key_.shift_left(key);
         size_ += 1;
     }
-    constexpr void push_front(bitwise_key key, key_size_type size) noexcept
+    constexpr void shift_left(bitwise_key key, key_size_type size) noexcept
     {
         assert(size_ + size <= key_.max_size());
-        key_.push_front(key, size);
+        key_.shift_left(key, size);
         size_ += size;
     }
 

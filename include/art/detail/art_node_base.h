@@ -72,10 +72,10 @@ template <typename Header> struct art_node_base {
 
     // Prefix manipulation routines
     constexpr void shift_right(key_size_type size) noexcept { header.shift_right(size); }
-    constexpr void push_front(std::uint8_t key) noexcept { header.push_front(key); }
-    constexpr void push_front(const std::pair<bitwise_key, key_size_type>& prefix) noexcept
+    constexpr void shift_left(std::uint8_t key) noexcept { header.shift_left(key); }
+    constexpr void shift_left(const std::pair<bitwise_key, key_size_type>& prefix) noexcept
     {
-        header.push_front(prefix.first, prefix.second);
+        header.shift_left(prefix.first, prefix.second);
     }
 
     void dump(std::ostream& os) const

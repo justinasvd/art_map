@@ -16,6 +16,9 @@ struct set_traits : public container_traits<Key, std::false_type, Key, Compare, 
     using mapped_type = std::false_type;
 
     using fast_key_type = fast_const_argument_t<Key>;
+    using reference = fast_key_type;
+    using const_reference = fast_key_type;
+
     [[nodiscard]] static fast_key_type key(fast_key_type x) noexcept { return x; }
 
     template <typename T> [[nodiscard]] static constexpr mapped_type value(T&&) noexcept

@@ -192,7 +192,7 @@ inline typename db<P>::iterator db<P>::grow_node(const_iterator hint, node_ptr d
         leaf_type* const leaf_ptr = leaf.get();
         auto larger =
             make_node_ptr<larger_inode>(make_unique_node_ptr(dst), std::move(leaf), key_byte);
-        iterator leaf_iter(leaf_ptr, larger->index(), larger.get());
+        const iterator leaf_iter(leaf_ptr, larger->index(), larger.get());
         release_to_parent(hint, std::move(larger));
         return leaf_iter;
     }
@@ -224,15 +224,22 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
     if (dst_type == node_type::LEAF) {
         leaf_type* const pdst = static_cast<leaf_type*>(hint.node());
 
+        bitwise_key prefix = pdst->key();
+
         // Can only happen in multivalued container case
-        if (BOOST_UNLIKELY(pdst->key() == leaf_ptr->key())) {
+        if (BOOST_UNLIKELY(prefix == leaf_ptr->key())) {
             pdst->push_back(std::move(leaf_ptr->value()));
             return iterator(hint);
         }
 
+        const key_size_type depth = key.first.max_size() - key.second;
+
         // Put the 2 leaves under the single inode_4
-        return create_inode_4(hint, pdst->shared_prefix(key.first, key.second - 1), pdst,
-                              std::move(leaf_ptr), key.first.max_size() - key.second);
+        prefix.shift_right(depth);
+        const key_size_type len = bitwise_key::shared_len(prefix, key.first, key.second - 1);
+
+        return create_inode_4(hint, std::make_pair(bitwise_key::partial_key(prefix, len), len),
+                              pdst, std::move(leaf_ptr), depth);
     }
 
     // Some other node, not a leaf
@@ -299,24 +306,53 @@ inline std::pair<typename db<P>::iterator, bool> db<P>::emplace_key_args(std::fa
                           should_insert);
 }
 
-template <typename P> template <typename Source> inline void db<P>::shrink_node(const_iterator pos)
+template <typename Iterator> inline Iterator get_iterator(Iterator it) noexcept
+{
+    return it;
+}
+
+template <typename Iterator> inline Iterator get_iterator(std::pair<Iterator, bool> p) noexcept
+{
+    return p.first;
+}
+
+template <typename P>
+template <typename... Args>
+inline typename db<P>::iterator db<P>::emplace_hint_key_args(iterator hint, fast_key_type key,
+                                                             Args&&... args)
+{
+    // Fast path for insert(lower_bound())
+    if (hint.match(key)) {
+        leaf_type* const pdst = static_cast<leaf_type*>(hint.node());
+        pdst->push_front(std::forward<Args>(args)...);
+        return hint;
+    }
+    return get_iterator(emplace_key_args(multi_container(), key, std::forward<Args>(args)...));
+}
+
+template <typename P>
+template <typename Source>
+inline typename db<P>::iterator db<P>::shrink_node(iterator pos)
 {
     auto src = static_cast<Source*>(pos.parent());
-    if (!src->is_min_size()) {
+    if (BOOST_LIKELY(!src->is_min_size())) {
         src->remove(pos.index());
     } else {
         // If allocation fails here, the original node will be left untouched,
         // which gives the shrinking operation the strong exception safety guarantee
-        auto dst = make_smaller_node(*src, pos.index());
-        release_to_parent(src->self_iterator(), std::move(dst));
+        auto smaller = make_smaller_node(*src, pos.index());
+        release_to_parent(src->self_iterator(), std::move(smaller));
         // All went well, we can deallocate the original node
         deallocate(src);
     }
+    return pos;
 }
 
-template <typename P> inline void db<P>::internal_erase(const_iterator pos)
+template <typename P> inline typename db<P>::iterator db<P>::internal_erase(iterator pos)
 {
     assert(pos && pos.type() == node_type::LEAF);
+
+    iterator after_erase;
 
     // Also remove a leaf from its parent. In case of the no parent case,
     // we'll simply delete the root leaf
@@ -325,28 +361,30 @@ template <typename P> inline void db<P>::internal_erase(const_iterator pos)
     if (BOOST_UNLIKELY(leaf_parent == nullptr)) {
         assert(pos.node() == tree.root);
         tree.root = nullptr;
+        after_erase = iterator{};
     } else {
         // Remove the value from to the parent node.
         // If that node is already of minimum size, then a new smaller
         // node will be created without the value to remove.
         switch (leaf_parent->type()) {
         case node_type::I4:
-            shrink_node<inode_4>(pos);
+            after_erase = shrink_node<inode_4>(pos);
             break;
         case node_type::I16:
-            shrink_node<inode_16>(pos);
+            after_erase = shrink_node<inode_16>(pos);
             break;
         case node_type::I48:
-            shrink_node<inode_48>(pos);
+            after_erase = shrink_node<inode_48>(pos);
             break;
         default:
             assert(leaf_parent->type() == node_type::I256);
-            shrink_node<inode_256>(pos);
+            after_erase = shrink_node<inode_256>(pos);
         }
     }
 
     // All went well, we can deallocate the leaf
     deallocate(static_cast<leaf_type*>(pos.node()));
+    return after_erase;
 }
 
 template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_type key)
@@ -358,20 +396,10 @@ template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_typ
 
     if (pos.match(key)) {
         removed = static_cast<leaf_type*>(pos.node())->size();
-        internal_erase(pos);
+        internal_erase(iterator(pos));
     }
 
     return removed;
-}
-
-template <typename P> inline typename db<P>::iterator db<P>::erase(iterator pos)
-{
-    if (pos != end()) {
-        const iterator next = std::next(pos);
-        internal_erase(pos);
-        pos = next;
-    }
-    return pos;
 }
 
 template <typename P> inline typename db<P>::iterator db<P>::erase(iterator first, iterator last)

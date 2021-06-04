@@ -180,15 +180,15 @@ public:
     // logarithmic time as if a call to insert(value) were made.
     iterator insert(iterator hint, const value_type& value)
     {
-        return emplace_hint_key_args(hint, Traits::key(value), value);
+        return emplace_hint_key_args(hint, Traits::key(value), Traits::value(value));
     }
     iterator insert(iterator hint, value_type&& value)
     {
-        return emplace_hint_key_args(hint, Traits::key(value), std::move(value));
+        return emplace_hint_key_args(hint, Traits::key(value), Traits::value(std::move(value)));
     }
     template <typename Arg> iterator insert(iterator hint, Arg&& value)
     {
-        return emplace_hint_key_args(hint, Traits::key(value), std::move(value));
+        return emplace_hint_key_args(hint, Traits::key(value), Traits::value(std::move(value)));
     }
 
     template <typename InputIterator> void insert(InputIterator first, InputIterator last)
@@ -198,7 +198,7 @@ public:
     }
 
     size_type erase(fast_key_type key);
-    iterator erase(iterator pos);
+    iterator erase(iterator pos) { return pos != end() ? internal_erase(pos) : pos; }
     iterator erase(iterator first, iterator last);
 
     void swap(self_t& other) noexcept;
@@ -266,7 +266,7 @@ private:
     template <typename... Args>
     [[nodiscard]] iterator emplace_hint_key_args(iterator hint, fast_key_type key, Args&&... args);
 
-    void internal_erase(const_iterator pos);
+    iterator internal_erase(iterator pos);
 
 private:
     [[nodiscard]] allocator_type& allocator() noexcept
@@ -345,7 +345,7 @@ private:
         return src.leave_last_child(child_to_delete, *this);
     }
 
-    template <typename Source> void shrink_node(const_iterator pos);
+    template <typename Source> iterator shrink_node(iterator pos);
 
 private:
     // A helper struct to get the empty base class optimization for 0 size allocators.

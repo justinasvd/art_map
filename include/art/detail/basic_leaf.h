@@ -47,6 +47,15 @@ struct basic_leaf final : public art_node_base<Header> {
     [[nodiscard]] T& value() noexcept { return *addr(); }
     [[nodiscard]] const T& value() const noexcept { return *addr(); }
 
+    // Overwrite currently held value
+    template <typename... Args>
+    void push_front(Args&&... args) noexcept(
+        std::is_nothrow_constructible<T>::value&& std::is_nothrow_move_assignable<T>::value)
+    {
+        T tmp(std::forward<Args>(args)...);
+        value() = std::move(tmp);
+    }
+
     [[noreturn]] static void push_back(T&&) { throw std::runtime_error("basic_leaf: push_back"); }
 
 private:
@@ -84,6 +93,7 @@ struct basic_leaf<Header, std::integral_constant<T, V>, Alloc> final
     // Simply return a value
     [[nodiscard]] static constexpr value_type value() noexcept { return value_type(); }
 
+    static constexpr void push_front(value_type) noexcept {}
     [[noreturn]] static void push_back(value_type)
     {
         throw std::runtime_error("basic_leaf: push_back");
