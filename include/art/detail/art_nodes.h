@@ -38,7 +38,7 @@ namespace detail
 #endif
 }
 
-#define CANNOT_HAPPEN() cannot_happen(__FILE__, __LINE__, __func__)
+#define ART_DETAIL_CANNOT_HAPPEN() cannot_happen(__FILE__, __LINE__, __func__)
 
 #if defined(__SSE2__)
 // Idea from https://stackoverflow.com/a/32945715/80458
@@ -87,7 +87,7 @@ public:
             static_cast<const inode256_type*>(this)->dump(os);
             break;
         default:
-            CANNOT_HAPPEN();
+            ART_DETAIL_CANNOT_HAPPEN();
         }
     }
 
@@ -110,7 +110,7 @@ public:
         case node_type::LEAF:
             return 1;
         default:
-            CANNOT_HAPPEN();
+            ART_DETAIL_CANNOT_HAPPEN();
         }
     }
 
@@ -126,7 +126,7 @@ public:
         case node_type::I256:
             return static_cast<inode256_type*>(this)->delete_subtree(db_instance);
         default:
-            CANNOT_HAPPEN();
+            ART_DETAIL_CANNOT_HAPPEN();
         }
     }
 
@@ -142,7 +142,7 @@ public:
         case node_type::I256:
             return static_cast<inode256_type*>(this)->find_child(key_byte);
         default:
-            CANNOT_HAPPEN();
+            ART_DETAIL_CANNOT_HAPPEN();
         }
     }
 
@@ -158,7 +158,7 @@ public:
         case node_type::I256:
             return static_cast<inode256_type*>(this)->leftmost_child(start);
         default:
-            CANNOT_HAPPEN();
+            ART_DETAIL_CANNOT_HAPPEN();
         }
     }
 

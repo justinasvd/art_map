@@ -128,7 +128,7 @@ inline void db<P>::deallocate(node_ptr node) noexcept(
         deallocate(static_cast<leaf_type*>(node));
         break;
     default:
-        CANNOT_HAPPEN();
+        ART_DETAIL_CANNOT_HAPPEN();
     }
 }
 
@@ -153,7 +153,7 @@ inline void db<P>::release_to_parent(const_iterator hint, NodePtr child) noexcep
             static_cast<inode_256*>(parent)->replace(hint, child.release());
             break;
         default:
-            CANNOT_HAPPEN();
+            ART_DETAIL_CANNOT_HAPPEN();
         }
     } else {
         if (child->type() != node_type::LEAF)
