@@ -133,7 +133,7 @@ private:
     [[nodiscard]] bool is_leaf() const noexcept { return is_leaf(node_); }
     [[nodiscard]] bool match(fast_key_type key) const noexcept
     {
-        return is_leaf() && node_->key() == bitwise_key(key);
+        return is_leaf() && node_->prefix() == bitwise_key(key);
     }
     [[nodiscard]] key_size_type prefix_length() const noexcept { return node_->prefix_length(); }
     [[nodiscard]] key_size_type shared_prefix_length(bitwise_key key) const noexcept
@@ -145,7 +145,7 @@ private:
     {
         assert(is_leaf(node_));
         leaf_type* const l = static_cast<leaf_type*>(node_);
-        return Traits::value_ref(l->key().unpack(), l->value());
+        return Traits::value_ref(l->prefix().unpack(), l->value());
     }
 
     void increment() noexcept

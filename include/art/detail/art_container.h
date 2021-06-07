@@ -20,10 +20,9 @@ template <typename Db> class basic_inode_256;
 template <typename Traits> class db
 {
 public:
-    using header_type = typename Traits::header_type;
+    using bitwise_key = typename Traits::bitwise_key;
 
 private:
-    using bitwise_key = typename Traits::bitwise_key;
     using multi_container = typename Traits::multi_container;
     using node_base = typename Traits::node_base;
     using node_ptr = node_base*;
@@ -198,7 +197,7 @@ public:
     }
 
     size_type erase(fast_key_type key);
-    iterator erase(iterator pos) { return pos != end() ? internal_erase(pos) : pos; }
+    iterator erase(iterator pos) { return pos != end() ? std::next(internal_erase(pos)) : pos; }
     iterator erase(iterator first, iterator last);
 
     void swap(self_t& other) noexcept;
@@ -323,7 +322,7 @@ private:
     template <typename NodePtr> void release_to_parent(const_iterator hint, NodePtr child) noexcept;
 
     template <typename NodePtr>
-    iterator create_inode_4(const_iterator hint, const bitwise_key_prefix& prefix, NodePtr pdst,
+    iterator create_inode_4(const_iterator hint, bitwise_key prefix, NodePtr pdst,
                             leaf_unique_ptr leaf, key_size_type rem);
 
     template <typename Source>

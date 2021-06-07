@@ -119,6 +119,8 @@ template <typename T, typename Key, typename Policy> struct unsigned_integral_bi
     {
     }
 
+    [[nodiscard]] size_type size() const noexcept { return key.bytes[num_bytes - 1]; }
+
     // Internal nodes use partial keys
     [[nodiscard]] std::uint8_t operator[](size_type index) const noexcept
     {
@@ -133,23 +135,31 @@ template <typename T, typename Key, typename Policy> struct unsigned_integral_bi
 
     [[nodiscard]] constexpr std::uint8_t front() const noexcept { return key.bytes[0]; }
 
-    constexpr void shift_left(std::uint8_t value) noexcept
-    {
-        shift_left_raw(1);
-        key.bytes[0] = value;
-    }
-    constexpr void shift_left(unsigned_integral_bitwise_key value, size_type len) noexcept
-    {
-        shift_left_raw(len);
-        key.bitkey |= value.key.bitkey;
-    }
-    constexpr void shift_left(
-        const std::pair<unsigned_integral_bitwise_key, size_type>& prefix) noexcept
-    {
-        shift_left(prefix.first, prefix.second);
-    }
-
     constexpr void shift_right(size_type nbytes) noexcept { key.bitkey >>= (nbytes * CHAR_BIT); }
+    constexpr void shift_right_resize(size_type nbytes) noexcept
+    {
+        assert(nbytes <= size());
+        const size_type new_size = size() - nbytes;
+        shift_right(nbytes);
+        put_size(new_size);
+    }
+    constexpr void shift_left_resize(std::uint8_t value) noexcept
+    {
+        const size_type new_size = size() + 1;
+        assert(new_size < max_size());
+        shift_left(1);
+        key.bytes[0] = value;
+        put_size(new_size);
+    }
+    constexpr void shift_left_resize(unsigned_integral_bitwise_key value) noexcept
+    {
+        const size_type len = value.size();
+        const size_type new_size = size() + len;
+        assert(new_size < max_size());
+        shift_left(len);
+        key.bitkey |= value.key.bitkey;
+        put_size(new_size);
+    }
 
     [[nodiscard]] static size_type shared_len(unsigned_integral_bitwise_key k1,
                                               unsigned_integral_bitwise_key k2,
@@ -165,8 +175,9 @@ template <typename T, typename Key, typename Policy> struct unsigned_integral_bi
     [[nodiscard]] static unsigned_integral_bitwise_key partial_key(unsigned_integral_bitwise_key k,
                                                                    size_type cut_len) noexcept
     {
-        return unsigned_integral_bitwise_key(k.key.bitkey & (himask(cut_len) - 1),
-                                             std::false_type());
+        unsigned_integral_bitwise_key p(k.key.bitkey & (himask(cut_len) - 1), std::false_type());
+        p.put_size(cut_len);
+        return p;
     }
 
     [[nodiscard]] key_type unpack() const noexcept { return Policy::unpack(key.bitkey); }
@@ -183,7 +194,8 @@ private:
         return static_cast<Key>(1) << (len * CHAR_BIT);
     }
 
-    constexpr void shift_left_raw(size_type nbytes) noexcept { key.bitkey <<= (nbytes * CHAR_BIT); }
+    constexpr void shift_left(size_type nbytes) noexcept { key.bitkey <<= (nbytes * CHAR_BIT); }
+    constexpr void put_size(size_type len) noexcept { key.bytes[num_bytes - 1] = len; }
 
     union {
         Key bitkey;

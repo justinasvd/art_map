@@ -1,7 +1,6 @@
 #ifndef ART_CONTAINER_TRAITS_HEADER_INCLUDED
 #define ART_CONTAINER_TRAITS_HEADER_INCLUDED
 
-#include "basic_header.h"
 #include "basic_leaf.h"
 #include "bitwise_key.h"
 
@@ -30,9 +29,8 @@ struct container_traits {
     // case of failure, when the compiler says that florbicators must vesterimuzite,
     // the spewed error messages would be at least potentially parsable.
     using bitwise_key = bitwise_key_t<Key, Compare>;
-    using header_type = basic_header<bitwise_key>;
-    using node_base = art_node_base<header_type>;
-    using leaf_type = basic_leaf<header_type, mapped_type, allocator_type>;
+    using node_base = art_node_base<bitwise_key>;
+    using leaf_type = basic_leaf<bitwise_key, mapped_type, allocator_type>;
 };
 
 } // namespace detail

@@ -164,8 +164,7 @@ inline void db<P>::release_to_parent(const_iterator hint, NodePtr child) noexcep
 
 template <typename P>
 template <typename NodePtr>
-inline typename db<P>::iterator db<P>::create_inode_4(const_iterator hint,
-                                                      const bitwise_key_prefix& prefix,
+inline typename db<P>::iterator db<P>::create_inode_4(const_iterator hint, bitwise_key prefix,
                                                       NodePtr pdst, leaf_unique_ptr leaf,
                                                       key_size_type rem)
 {
@@ -182,7 +181,6 @@ inline typename db<P>::iterator db<P>::grow_node(const_iterator hint, node_ptr d
 {
     using larger_inode = typename Source::larger_inode_type;
 
-    assert(leaf->prefix_length() != 0);
     auto dst = static_cast<Source*>(dest_node);
     if (BOOST_LIKELY(!dst->is_full())) {
         return dst->add(std::move(leaf), key_byte);
@@ -224,10 +222,10 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
     if (dst_type == node_type::LEAF) {
         leaf_type* const pdst = static_cast<leaf_type*>(hint.node());
 
-        bitwise_key prefix = pdst->key();
+        bitwise_key prefix = pdst->prefix();
 
         // Can only happen in multivalued container case
-        if (BOOST_UNLIKELY(prefix == leaf_ptr->key())) {
+        if (BOOST_UNLIKELY(prefix == leaf_ptr->prefix())) {
             pdst->push_back(std::move(leaf_ptr->value()));
             return iterator(hint);
         }
@@ -238,8 +236,8 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
         prefix.shift_right(depth);
         const key_size_type len = bitwise_key::shared_len(prefix, key.first, key.second - 1);
 
-        return create_inode_4(hint, std::make_pair(bitwise_key::partial_key(prefix, len), len),
-                              pdst, std::move(leaf_ptr), depth);
+        return create_inode_4(hint, bitwise_key::partial_key(prefix, len), pdst,
+                              std::move(leaf_ptr), depth);
     }
 
     // Some other node, not a leaf
@@ -248,10 +246,10 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
 
     // If the prefix is not fully shared, split the prefix
     {
-        const auto shared_prefix = pdst->shared_prefix(key.first);
-        if (shared_prefix.second < prefix_len) {
+        const bitwise_key shared_prefix = pdst->shared_prefix(key.first);
+        if (shared_prefix.size() < prefix_len) {
             return create_inode_4(hint, shared_prefix, pdst, std::move(leaf_ptr),
-                                  key.first[shared_prefix.second]);
+                                  key.first[shared_prefix.size()]);
         }
     }
 

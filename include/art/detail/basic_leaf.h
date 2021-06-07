@@ -13,14 +13,14 @@ namespace detail
 {
 
 // Helper struct for leaf node-related data
-template <typename Header, typename T, typename Alloc>
-struct basic_leaf final : public art_node_base<Header> {
+template <typename BitwiseKey, typename T, typename Alloc>
+struct basic_leaf final : public art_node_base<BitwiseKey> {
     using value_type = T;
     using allocator_type = Alloc;
     using allocator_traits = std::allocator_traits<Alloc>;
-    using bitwise_key = typename Header::bitwise_key;
-    using key_size_type = typename bitwise_key::size_type;
-    using parent_type = art_node_base<Header>;
+    using bitwise_key = BitwiseKey;
+    using key_size_type = typename BitwiseKey::size_type;
+    using parent_type = art_node_base<BitwiseKey>;
     using key_type = typename bitwise_key::key_type;
     using fast_key_type = fast_const_argument_t<key_type>;
 
@@ -67,14 +67,14 @@ private:
 };
 
 // Specialization for integral constants that do not take any space
-template <typename Header, typename T, T V, typename Alloc>
-struct basic_leaf<Header, std::integral_constant<T, V>, Alloc> final
-    : public art_node_base<Header> {
+template <typename BitwiseKey, typename T, T V, typename Alloc>
+struct basic_leaf<BitwiseKey, std::integral_constant<T, V>, Alloc> final
+    : public art_node_base<BitwiseKey> {
     using value_type = std::integral_constant<T, V>;
     using allocator_type = Alloc;
-    using bitwise_key = typename Header::bitwise_key;
-    using key_size_type = typename bitwise_key::size_type;
-    using parent_type = art_node_base<Header>;
+    using bitwise_key = BitwiseKey;
+    using key_size_type = typename BitwiseKey::size_type;
+    using parent_type = art_node_base<BitwiseKey>;
     using key_type = typename bitwise_key::key_type;
     using fast_key_type = fast_const_argument_t<key_type>;
 

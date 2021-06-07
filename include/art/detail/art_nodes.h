@@ -48,9 +48,9 @@ inline auto _mm_cmple_epu8(__m128i x, __m128i y) noexcept
 }
 #endif
 
-template <typename Db> class basic_inode_impl : public art_node_base<typename Db::header_type>
+template <typename Db> class basic_inode_impl : public art_node_base<typename Db::bitwise_key>
 {
-    using base_t = art_node_base<typename Db::header_type>;
+    using base_t = art_node_base<typename Db::bitwise_key>;
 
 public:
     using inode_type = basic_inode_impl<Db>;
@@ -59,7 +59,6 @@ public:
     using inode48_type = basic_inode_48<Db>;
     using inode256_type = basic_inode_256<Db>;
 
-    using header_type = typename Db::header_type;
     using leaf_type = typename Db::leaf_type;
     using bitwise_key = typename Db::bitwise_key;
     using key_size_type = typename bitwise_key::size_type;
@@ -203,17 +202,8 @@ public:
 protected:
     using parent_info = std::pair<inode_type*, std::uint8_t>;
 
-    constexpr basic_inode_impl(node_type type, unsigned min_size, bitwise_key key,
-                               key_size_type key_size) noexcept
-        : base_t(assert_non_leaf(type), key, key_size)
-        , parent_{}
-        , children_count(min_size)
-    {
-    }
-
-    template <typename SourceNode>
-    constexpr basic_inode_impl(node_type type, unsigned min_size, const SourceNode& node) noexcept
-        : base_t(assert_non_leaf(type), node.prefix())
+    constexpr basic_inode_impl(node_type type, unsigned min_size, bitwise_key key) noexcept
+        : base_t(assert_non_leaf(type), key)
         , parent_{}
         , children_count(min_size)
     {
@@ -257,7 +247,6 @@ class basic_inode : public basic_inode_impl<Db>
     using parent_type = basic_inode_impl<Db>;
 
 public:
-    using header_type = typename parent_type::header_type;
     using bitwise_key = typename parent_type::bitwise_key;
     using key_size_type = typename bitwise_key::size_type;
     using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
@@ -265,13 +254,8 @@ public:
     using smaller_inode_type = SmallerDerived;
     using larger_inode_type = LargerDerived;
 
-    constexpr basic_inode(bitwise_key key, key_size_type key_size) noexcept
-        : parent_type(NodeType, MinSize, key, key_size)
-    {
-    }
-
-    explicit constexpr basic_inode(const std::pair<bitwise_key, key_size_type>& prefix) noexcept
-        : parent_type(NodeType, MinSize, prefix.first, prefix.second)
+    explicit constexpr basic_inode(bitwise_key key) noexcept
+        : parent_type(NodeType, MinSize, key)
     {
     }
 
@@ -293,14 +277,14 @@ public:
 
 protected:
     explicit constexpr basic_inode(const SmallerDerived& source_node) noexcept
-        : basic_inode_impl<Db>(NodeType, MinSize, source_node)
+        : basic_inode_impl<Db>(NodeType, MinSize, source_node.prefix())
     {
         assert(source_node.is_full());
         assert(is_min_size());
     }
 
     explicit constexpr basic_inode(const LargerDerived& source_node) noexcept
-        : basic_inode_impl<Db>(NodeType, Capacity, source_node)
+        : basic_inode_impl<Db>(NodeType, Capacity, source_node.prefix())
     {
         assert(source_node.is_min_size());
         assert(is_full());
@@ -380,7 +364,7 @@ public:
                               key_size_type offset) noexcept
     {
         const key_size_type trim = offset + this->prefix_length();
-        return add_two_to_empty(child1->key()[trim], child1, child2->key()[trim],
+        return add_two_to_empty(child1->prefix()[trim], child1, child2->prefix()[trim],
                                 std::move(child2));
     }
 
