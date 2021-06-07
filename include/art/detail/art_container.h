@@ -74,15 +74,38 @@ public:
     // Creation and destruction as defined in C++14 for std::map
     constexpr db() = default;
 
-    explicit db(const allocator_type& alloc);
+    explicit db(const allocator_type& alloc)
+        : tree(alloc)
+    {
+    }
 
-    template <class InputIt> db(InputIt first, InputIt last, const allocator_type& alloc);
+    template <class InputIt>
+    db(InputIt first, InputIt last, const allocator_type& alloc)
+        : tree(alloc)
+    {
+        insert(first, last);
+    }
 
     db(const db& other);
     db(const db& other, const allocator_type& alloc);
-    db(db&& other);
-    db(db&& other, const allocator_type& alloc);
-    db(std::initializer_list<value_type> init, const allocator_type&);
+    db(db&& other)
+        : tree(std::move(other.tree))
+        , count_(std::move(other.count_))
+    {
+        other.tree.root = nullptr;
+    }
+    db(db&& other, const allocator_type& alloc)
+        : tree(alloc)
+        , count_(std::move(other.count_))
+    {
+        tree.root = other.tree.root;
+        other.tree.root = nullptr;
+    }
+    db(std::initializer_list<value_type> init, const allocator_type& alloc)
+        : tree(alloc)
+    {
+        insert(init.begin(), init.end());
+    }
 
     ~db() noexcept(std::is_nothrow_destructible<mapped_type>::value)
     {
@@ -350,6 +373,12 @@ private:
     // A helper struct to get the empty base class optimization for 0 size allocators.
     // In C++20 parlance that would be [[no_unique_address]] for the allocator.
     struct compress_empty_base : public allocator_type {
+        compress_empty_base() = default;
+        compress_empty_base(const allocator_type& alloc)
+            : allocator_type(alloc)
+        {
+        }
+        compress_empty_base(compress_empty_base&& rhs) = default;
         node_ptr root{nullptr};
     } tree;
 
