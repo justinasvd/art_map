@@ -6,6 +6,7 @@
 #include <boost/endian/conversion.hpp>
 #include <boost/integer.hpp>
 
+#include <array>
 #include <cassert>
 #include <climits>
 #include <functional>

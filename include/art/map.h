@@ -67,7 +67,7 @@ public:
     using const_iterator = typename base_t::const_iterator;
 
     // Forward c-tors
-    using base_t::db;
+    using typename base_t::db;
 
     template <typename... Args> std::pair<iterator, bool> emplace(fast_key_type key, Args&&... args)
     {

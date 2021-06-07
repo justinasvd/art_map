@@ -15,6 +15,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 
 #include <boost/core/ignore_unused.hpp>
 
@@ -335,7 +336,7 @@ template <typename Db> class basic_inode_4 : public basic_inode_4_parent<Db>
     using iterator = typename Db::iterator;
 
 public:
-    using parent_type::basic_inode;
+    using typename parent_type::basic_inode;
 
     constexpr basic_inode_4(const inode16_type& source_node, std::uint8_t child_to_delete)
         : parent_type(source_node)
