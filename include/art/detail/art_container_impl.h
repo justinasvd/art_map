@@ -26,7 +26,7 @@ inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix&
 {
     const_iterator pos(tree.root, 0);
 
-    if (pos) {
+    if (pos.node()) {
         while (pos.tag() != node_type::LEAF) {
             const node_base* nb = pos.node_base();
             const key_size_type prefix_length = nb->prefix_length();
@@ -34,7 +34,7 @@ inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix&
                 break;
 
             const auto child = inode::find_child(pos.node(), key.first[prefix_length]);
-            if (!child)
+            if (!child.node())
                 break;
             pos = child;
 
@@ -228,12 +228,12 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
     auto leaf_ptr = make_leaf_ptr(original_key, std::forward<Args>(args)...);
 
     if (BOOST_UNLIKELY(empty())) {
-        assert(!hint);
+        assert(!hint.node());
         tree.root = node_ptr::create(leaf_ptr.release(), node_type::LEAF);
         return iterator(tree.root, 0);
     }
 
-    assert(hint);
+    assert(hint.node());
     assert(key.second != 0);
 
     const node_type dst_tag = hint.tag();
@@ -370,7 +370,7 @@ inline typename db<P>::iterator db<P>::shrink_node(iterator pos)
 
 template <typename P> inline typename db<P>::iterator db<P>::internal_erase(iterator pos)
 {
-    assert(pos && pos.tag() == node_type::LEAF);
+    assert(pos.node() && pos.tag() == node_type::LEAF);
 
     iterator after_erase;
 

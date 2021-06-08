@@ -31,39 +31,45 @@ template <typename T> struct compared_arg;
 
 // Specializations for particular orderings
 template <typename T> struct compared_arg<std::less<T>> {
-    using argument_type = T;
+    using key_type = T;
     using order = less_tag;
 };
 
 template <typename T> struct compared_arg<std::greater<T>> {
-    using argument_type = T;
+    using key_type = T;
     using order = greater_tag;
 };
 
 } // namespace comparison_ops
 
-template <typename T> struct bitwise_compare;
+template <typename Key, typename Compare> struct bitwise_compare;
 
 // Specializations for particular orderings
-template <> struct bitwise_compare<comparison_ops::less_tag> {
-    template <typename T> [[nodiscard]] inline static constexpr T byte_swap(T k) noexcept
+template <typename Key> struct bitwise_compare<Key, comparison_ops::less_tag> {
+    using key_type = Key;
+    using bitkey_type = Key;
+
+    [[nodiscard]] inline static constexpr Key byte_swap(Key k) noexcept
     {
         // Flip bytes to Big Endian order (no-op on Big Endian architectures)
         return boost::endian::native_to_big(k);
     }
-    template <typename T> [[nodiscard]] inline static constexpr T unpack(T k) noexcept
+    [[nodiscard]] inline static constexpr Key unpack(Key k) noexcept
     {
         return boost::endian::big_to_native(k);
     }
 };
 
-template <> struct bitwise_compare<comparison_ops::greater_tag> {
-    template <typename T> [[nodiscard]] inline static constexpr T byte_swap(T k) noexcept
+template <typename Key> struct bitwise_compare<Key, comparison_ops::greater_tag> {
+    using key_type = Key;
+    using bitkey_type = Key;
+
+    [[nodiscard]] inline static constexpr Key byte_swap(Key k) noexcept
     {
         // Flip bytes to Little Endian order (no-op on Little Endian architectures)
         return boost::endian::native_to_little(k);
     }
-    template <typename T> [[nodiscard]] inline static constexpr T unpack(T k) noexcept
+    [[nodiscard]] inline static constexpr Key unpack(Key k) noexcept
     {
         return boost::endian::little_to_native(k);
     }
@@ -72,27 +78,33 @@ template <> struct bitwise_compare<comparison_ops::greater_tag> {
 template <typename Ptr, typename Order> struct ptr_bitwise_compare {
     static_assert(std::is_pointer<Ptr>::value, "Unsupported pointer type");
 
-    using compare_t = bitwise_compare<Order>;
-    [[nodiscard]] inline static constexpr std::uintptr_t byte_swap(Ptr k) noexcept
+    using key_type = Ptr;
+    using bitkey_type = std::uintptr_t;
+    using compare_t = bitwise_compare<bitkey_type, Order>;
+
+    [[nodiscard]] inline static constexpr bitkey_type byte_swap(Ptr k) noexcept
     {
-        return compare_t::byte_swap(reinterpret_cast<std::uintptr_t>(k));
+        return compare_t::byte_swap(reinterpret_cast<bitkey_type>(k));
     }
-    [[nodiscard]] inline static constexpr Ptr unpack(std::uintptr_t k) noexcept
+    [[nodiscard]] inline static constexpr Ptr unpack(bitkey_type k) noexcept
     {
         return reinterpret_cast<Ptr>(compare_t::unpack(k));
     }
 };
 
-template <typename Int, typename UInt, typename Order> struct int_bitwise_compare {
+template <typename Int, typename Order> struct int_bitwise_compare {
     static_assert(std::is_signed<Int>::value && !std::is_floating_point<Int>::value,
                   "Unsupported signed integer type");
 
-    using compare_t = bitwise_compare<Order>;
-    [[nodiscard]] inline static constexpr UInt byte_swap(Int k) noexcept
+    using key_type = Int;
+    using bitkey_type = typename boost::uint_t<sizeof(Int) * CHAR_BIT>::fast;
+    using compare_t = bitwise_compare<bitkey_type, Order>;
+
+    [[nodiscard]] inline static constexpr bitkey_type byte_swap(Int k) noexcept
     {
-        return compare_t::byte_swap(static_cast<UInt>(-k));
+        return compare_t::byte_swap(static_cast<bitkey_type>(-k));
     }
-    [[nodiscard]] inline static constexpr Int unpack(UInt k) noexcept
+    [[nodiscard]] inline static constexpr Int unpack(bitkey_type k) noexcept
     {
         return -static_cast<Int>(compare_t::unpack(k));
     }
@@ -102,20 +114,23 @@ template <typename Int, typename UInt, typename Order> struct int_bitwise_compar
 // the greedy compiler would not waste more memory than strictly necessary
 // in leaves and internal nodes. This packing shaves off 8 bytes for each leaf,
 // with negligible effect on overall performance.
-template <typename T, typename Key, typename Policy> struct unsigned_integral_bitwise_key {
-    static_assert(std::is_unsigned<Key>::value && std::is_integral<Key>::value,
-                  "Unsupported unsigned integral key type");
-    static_assert(sizeof(T) == sizeof(Key), "Invalid key size");
+template <typename Compare> struct unsigned_integral_bitwise_key {
 
-    using key_type = T;
+    using bitkey_type = typename Compare::bitkey_type;
+    static_assert(std::is_unsigned<bitkey_type>::value && std::is_integral<bitkey_type>::value,
+                  "Unsupported unsigned integral key type");
+
+    using key_type = typename Compare::key_type;
+    static_assert(sizeof(bitkey_type) == sizeof(key_type), "Invalid key size");
+
     using size_type = std::uint8_t;
-    static constexpr size_type num_bytes = sizeof(Key);
+    static constexpr size_type num_bytes = sizeof(key_type);
 
     static constexpr size_type max_size() noexcept { return num_bytes; }
 
     constexpr unsigned_integral_bitwise_key() noexcept = default;
-    explicit constexpr unsigned_integral_bitwise_key(T k) noexcept
-        : key{Policy::byte_swap(k)}
+    explicit constexpr unsigned_integral_bitwise_key(key_type k) noexcept
+        : key{Compare::byte_swap(k)}
     {
     }
 
@@ -130,12 +145,12 @@ template <typename T, typename Key, typename Policy> struct unsigned_integral_bi
 
     bool operator==(unsigned_integral_bitwise_key rhs) const noexcept
     {
-        return key.bitkey == rhs.key.bitkey;
+        return key.bits == rhs.key.bits;
     }
 
     [[nodiscard]] constexpr std::uint8_t front() const noexcept { return key.bytes[0]; }
 
-    constexpr void shift_right(size_type nbytes) noexcept { key.bitkey >>= (nbytes * CHAR_BIT); }
+    constexpr void shift_right(size_type nbytes) noexcept { key.bits >>= (nbytes * CHAR_BIT); }
     constexpr void shift_right_resize(size_type nbytes) noexcept
     {
         assert(nbytes <= size());
@@ -157,7 +172,7 @@ template <typename T, typename Key, typename Policy> struct unsigned_integral_bi
         const size_type new_size = size() + len;
         assert(new_size < max_size());
         shift_left(len);
-        key.bitkey |= value.key.bitkey;
+        key.bits |= value.key.bits;
         put_size(new_size);
     }
 
@@ -167,45 +182,45 @@ template <typename T, typename Key, typename Policy> struct unsigned_integral_bi
     {
         assert(clamp_byte_pos < num_bytes);
 
-        const Key diff = k1.key.bitkey ^ k2.key.bitkey;
-        const Key clamped = diff | himask(clamp_byte_pos);
+        const bitkey_type diff = k1.key.bits ^ k2.key.bits;
+        const bitkey_type clamped = diff | himask(clamp_byte_pos);
         return (ffs_nonzero(clamped) - 1) >> 3U;
     }
 
     [[nodiscard]] static unsigned_integral_bitwise_key partial_key(unsigned_integral_bitwise_key k,
                                                                    size_type cut_len) noexcept
     {
-        unsigned_integral_bitwise_key p(k.key.bitkey & (himask(cut_len) - 1), std::false_type());
+        unsigned_integral_bitwise_key p(k.key.bits & (himask(cut_len) - 1), std::false_type());
         p.put_size(cut_len);
         return p;
     }
 
-    [[nodiscard]] key_type unpack() const noexcept { return Policy::unpack(key.bitkey); }
+    [[nodiscard]] key_type unpack() const noexcept { return Compare::unpack(key.bits); }
 
 private:
     // Non-byte-swapping constructor
-    constexpr unsigned_integral_bitwise_key(Key k, std::false_type) noexcept
+    constexpr unsigned_integral_bitwise_key(bitkey_type k, std::false_type) noexcept
         : key{k}
     {
     }
 
-    static constexpr Key himask(size_type len) noexcept
+    static constexpr bitkey_type himask(size_type len) noexcept
     {
-        return static_cast<Key>(1) << (len * CHAR_BIT);
+        return static_cast<bitkey_type>(1) << (len * CHAR_BIT);
     }
 
-    constexpr void shift_left(size_type nbytes) noexcept { key.bitkey <<= (nbytes * CHAR_BIT); }
+    constexpr void shift_left(size_type nbytes) noexcept { key.bits <<= (nbytes * CHAR_BIT); }
     constexpr void put_size(size_type len) noexcept { key.bytes[num_bytes - 1] = len; }
 
     union {
-        Key bitkey;
+        bitkey_type bits;
         std::array<std::uint8_t, num_bytes> bytes;
     } key;
 };
 
 // Support for unsigned keys
 template <typename Key, typename Order> struct unsigned_bitwise_key {
-    using type = unsigned_integral_bitwise_key<Key, Key, bitwise_compare<Order>>;
+    using type = unsigned_integral_bitwise_key<bitwise_compare<Key, Order>>;
 };
 
 template <typename Key, typename Order>
@@ -213,8 +228,7 @@ using unsigned_bitwise_key_t = typename unsigned_bitwise_key<Key, Order>::type;
 
 // Supports for non member-function pointers
 template <typename Key, typename Order> struct pointer_bitwise_key {
-    using type =
-        unsigned_integral_bitwise_key<Key, std::uintptr_t, ptr_bitwise_compare<Key, Order>>;
+    using type = unsigned_integral_bitwise_key<ptr_bitwise_compare<Key, Order>>;
 };
 
 template <typename Key, typename Order>
@@ -223,9 +237,7 @@ using pointer_bitwise_key_t = typename pointer_bitwise_key<Key, Order>::type;
 // Supports for signed integers of various sizes. Floats and doubles are
 // explicitly not supported
 template <typename Key, typename Order> struct signed_bitwise_key {
-    using uint_t = typename boost::uint_t<sizeof(Key) * CHAR_BIT>::fast;
-    using type =
-        unsigned_integral_bitwise_key<Key, uint_t, int_bitwise_compare<Key, uint_t, Order>>;
+    using type = unsigned_integral_bitwise_key<int_bitwise_compare<Key, Order>>;
 };
 
 template <typename Key, typename Order>
@@ -234,8 +246,8 @@ using signed_bitwise_key_t = typename signed_bitwise_key<Key, Order>::type;
 template <typename Key, typename Compare> struct bitwise_key_compare {
     using predicate = comparison_ops::compared_arg<Compare>;
 
-    using arg_t = typename predicate::argument_type;
-    static_assert(std::is_convertible<Key, arg_t>::value, "Incompatible comparison predicate");
+    using arg_t = typename predicate::key_type;
+    static_assert(std::is_same<Key, arg_t>::value, "Incompatible comparison predicate");
 
     using order = typename predicate::order;
     using type = std::conditional_t<

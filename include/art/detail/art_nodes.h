@@ -189,8 +189,8 @@ protected:
 
     void leaf_index(std::uint8_t index) noexcept { parent_.second = index; }
 
-    static void clear_parent(inode_type& inode) noexcept { inode.parent_ = parent_info{}; }
-    static void assign_parent(inode_type& inode, node_ptr parent, std::uint8_t index) noexcept
+    static constexpr void assign_parent(inode_type& inode, node_ptr parent,
+                                        std::uint8_t index) noexcept
     {
         inode.parent_ = parent_info(parent, index);
     }
@@ -415,8 +415,8 @@ public:
             // Now we have to prepend inode_4's prefix to the last remaining node
             child_to_leave_ptr->shift_left(keys.byte_array[child_to_leave]);
             child_to_leave_ptr->shift_left(this->prefix());
-            parent_type::clear_parent(
-                *static_cast<basic_inode_impl<Db>*>(child_to_leave_ptr.get()));
+            parent_type::assign_parent(
+                *static_cast<basic_inode_impl<Db>*>(child_to_leave_ptr.get()), node_ptr{}, 0);
         }
         return child_to_leave_ptr;
     }

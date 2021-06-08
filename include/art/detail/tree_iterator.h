@@ -100,8 +100,6 @@ public:
         return tmp;
     }
 
-    explicit operator bool() const noexcept { return node_ != nullptr; }
-
     // Enable assignments between const and non-const iterators
     template <typename OtherTraits,
               typename = typename std::is_same<std::remove_cv_t<Traits>,
@@ -169,7 +167,7 @@ private:
                 // Parent node is not yet exhausted, try to find a leftmost leaf
                 // from the current position.
                 auto leaf = INode::leftmost_leaf(parent_, pos_in_parent);
-                if (leaf) {
+                if (leaf.node()) {
                     *this = leaf;
                     return;
                 }

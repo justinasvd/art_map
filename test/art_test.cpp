@@ -27,7 +27,7 @@ int main()
     auto p = db.emplace(std::numeric_limits<key_type>::max(), max_keys);
     assert(p.second);
     assert(db.size() == max_keys + 1);
-    std::cout << "Inserted " << db.size() << " elements, with average "
+    std::cout << "Inserted " << db.size() << " elements, on average "
               << (static_cast<double>(db.current_memory_use()) / db.size())
               << " bytes per element\n";
 

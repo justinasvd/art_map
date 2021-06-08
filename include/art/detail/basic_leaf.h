@@ -19,7 +19,7 @@ struct basic_leaf final : public art_node_base<BitwiseKey> {
     using allocator_traits = std::allocator_traits<Alloc>;
     using bitwise_key = BitwiseKey;
     using parent_type = art_node_base<BitwiseKey>;
-    using key_type = typename bitwise_key::key_type;
+    using key_type = typename BitwiseKey::key_type;
     using fast_key_type = fast_const_argument_t<key_type>;
 
     explicit constexpr basic_leaf(fast_key_type key) noexcept
@@ -79,7 +79,7 @@ struct basic_leaf<BitwiseKey, std::integral_constant<T, V>, Alloc> final
     using allocator_type = Alloc;
     using bitwise_key = BitwiseKey;
     using parent_type = art_node_base<BitwiseKey>;
-    using key_type = typename bitwise_key::key_type;
+    using key_type = typename BitwiseKey::key_type;
     using fast_key_type = fast_const_argument_t<key_type>;
 
     explicit constexpr basic_leaf(fast_key_type key) noexcept
