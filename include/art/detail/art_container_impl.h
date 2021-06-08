@@ -27,12 +27,13 @@ inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix&
     const_iterator pos(tree.root, 0);
 
     if (pos) {
-        while (pos.type() != node_type::LEAF) {
-            const key_size_type prefix_length = pos.prefix_length();
-            if (key.second <= prefix_length || pos.shared_prefix_length(key.first) < prefix_length)
+        while (pos.tag() != node_type::LEAF) {
+            const node_base* nb = pos.node_base();
+            const key_size_type prefix_length = nb->prefix_length();
+            if (key.second <= prefix_length || nb->shared_prefix_length(key.first) < prefix_length)
                 break;
 
-            const auto child = inode_cast(pos.node())->find_child(key.first[prefix_length]);
+            const auto child = inode::find_child(pos.node(), key.first[prefix_length]);
             if (!child)
                 break;
             pos = child;
@@ -45,11 +46,18 @@ inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix&
     return pos;
 }
 
+// Avoids keeping bitwise key temporary
+template <typename P>
+inline typename db<P>::const_iterator db<P>::internal_locate(fast_key_type key) const noexcept
+{
+    auto bitk = make_bitwise_key_prefix(key);
+    return internal_locate(bitk);
+}
+
 template <typename P>
 inline typename db<P>::const_iterator db<P>::internal_find(fast_key_type key) const noexcept
 {
-    auto bitk = make_bitwise_key_prefix(key);
-    auto pos = internal_locate(bitk);
+    auto pos = internal_locate(key);
     return pos.match(key) ? pos : end();
 }
 
@@ -108,24 +116,34 @@ inline void db<P>::deallocate(leaf_type* leaf) noexcept(
 }
 
 template <typename P>
+template <typename Node>
+inline void db<P>::deallocate_subtree(Node* node) noexcept(
+    std::is_nothrow_destructible<mapped_type>::value)
+{
+    node->delete_subtree(*this);
+    deallocate_node(node);
+}
+
+// Deallocate a tagged pointer
+template <typename P>
 inline void db<P>::deallocate(node_ptr node) noexcept(
     std::is_nothrow_destructible<mapped_type>::value)
 {
-    switch (node->type()) {
+    switch (node.tag()) {
     case node_type::I4:
-        deallocate(static_cast<inode_4*>(node));
+        deallocate_subtree(static_cast<inode_4*>(node.get()));
         break;
     case node_type::I16:
-        deallocate(static_cast<inode_16*>(node));
+        deallocate_subtree(static_cast<inode_16*>(node.get()));
         break;
     case node_type::I48:
-        deallocate(static_cast<inode_48*>(node));
+        deallocate_subtree(static_cast<inode_48*>(node.get()));
         break;
     case node_type::I256:
-        deallocate(static_cast<inode_256*>(node));
+        deallocate_subtree(static_cast<inode_256*>(node.get()));
         break;
     case node_type::LEAF:
-        deallocate(static_cast<leaf_type*>(node));
+        deallocate(static_cast<leaf_type*>(node.get()));
         break;
     default:
         ART_DETAIL_CANNOT_HAPPEN();
@@ -133,32 +151,29 @@ inline void db<P>::deallocate(node_ptr node) noexcept(
 }
 
 template <typename P>
-template <typename NodePtr>
-inline void db<P>::release_to_parent(const_iterator hint, NodePtr child) noexcept
+inline void db<P>::assign_to_parent(const_iterator hint, node_ptr child) noexcept
 {
     if (BOOST_LIKELY(hint.parent() != nullptr)) {
         const auto parent = hint.parent();
-        assert(parent->type() != node_type::LEAF);
-        switch (parent->type()) {
+        assert(parent.tag() != node_type::LEAF);
+        switch (parent.tag()) {
         case node_type::I4:
-            static_cast<inode_4*>(parent)->replace(hint, child.release());
+            static_cast<inode_4*>(parent.get())->replace(hint, child);
             break;
         case node_type::I16:
-            static_cast<inode_16*>(parent)->replace(hint, child.release());
+            static_cast<inode_16*>(parent.get())->replace(hint, child);
             break;
         case node_type::I48:
-            static_cast<inode_48*>(parent)->replace(hint, child.release());
+            static_cast<inode_48*>(parent.get())->replace(hint, child);
             break;
         case node_type::I256:
-            static_cast<inode_256*>(parent)->replace(hint, child.release());
+            static_cast<inode_256*>(parent.get())->replace(hint, child);
             break;
         default:
             ART_DETAIL_CANNOT_HAPPEN();
         }
     } else {
-        if (child->type() != node_type::LEAF)
-            inode_cast(child.get())->clear_parent();
-        tree.root = child.release();
+        tree.root = child;
     }
 }
 
@@ -170,7 +185,7 @@ inline typename db<P>::iterator db<P>::create_inode_4(const_iterator hint, bitwi
 {
     auto in4 = make_node_ptr<inode_4>(prefix);
     const iterator leaf_iter = in4->add_two_to_empty(pdst, std::move(leaf), rem);
-    release_to_parent(hint, std::move(in4));
+    assign_to_parent(hint, make_tagged_ptr(std::move(in4)));
     return leaf_iter;
 }
 
@@ -181,17 +196,21 @@ inline typename db<P>::iterator db<P>::grow_node(const_iterator hint, node_ptr d
 {
     using larger_inode = typename Source::larger_inode_type;
 
-    auto dst = static_cast<Source*>(dest_node);
+    assert(dest_node.tag() == Source::static_type());
+
+    auto dst = static_cast<Source*>(dest_node.get());
     if (BOOST_LIKELY(!dst->is_full())) {
         return dst->add(std::move(leaf), key_byte);
     } else {
-        // Destination node is full, needs to grow. Note that just before releasing
-        // the created node to its parent, the index points to the inserted leaf.
-        leaf_type* const leaf_ptr = leaf.get();
-        auto larger =
-            make_node_ptr<larger_inode>(make_unique_node_ptr(dst), std::move(leaf), key_byte);
-        const iterator leaf_iter(leaf_ptr, larger->index(), larger.get());
-        release_to_parent(hint, std::move(larger));
+        // Destination node is full, needs to grow
+        auto leaf_tag = node_ptr::create(leaf.get(), node_type::LEAF);
+        auto larger = make_node_ptr<larger_inode>(make_unique_node_ptr(dst, *this), std::move(leaf),
+                                                  key_byte);
+        auto larger_tag = node_ptr::create(larger.get(), larger_inode::static_type());
+        // index() points to the leaf that we have just inserted into the larger node
+        const iterator leaf_iter(leaf_tag, larger->index(), larger_tag);
+        assign_to_parent(hint, larger_tag);
+        larger.release(); // All went well, release the node
         return leaf_iter;
     }
 }
@@ -210,17 +229,17 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
 
     if (BOOST_UNLIKELY(empty())) {
         assert(!hint);
-        tree.root = leaf_ptr.release();
+        tree.root = node_ptr::create(leaf_ptr.release(), node_type::LEAF);
         return iterator(tree.root, 0);
     }
 
     assert(hint);
     assert(key.second != 0);
 
-    const node_type dst_type = hint.type();
+    const node_type dst_tag = hint.tag();
 
-    if (dst_type == node_type::LEAF) {
-        leaf_type* const pdst = static_cast<leaf_type*>(hint.node());
+    if (dst_tag == node_type::LEAF) {
+        leaf_type* const pdst = hint.leaf();
 
         bitwise_key prefix = pdst->prefix();
 
@@ -261,7 +280,7 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
     // Add the newly created leaf to the proper node.
     // If that node is full, then a new larger node will be created,
     // and the leaf will be added there.
-    switch (dst_type) {
+    switch (dst_tag) {
     case node_type::I4:
         return grow_node<inode_4>(hint, pdst, std::move(leaf_ptr), key_byte);
     case node_type::I16:
@@ -269,8 +288,8 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
     case node_type::I48:
         return grow_node<inode_48>(hint, pdst, std::move(leaf_ptr), key_byte);
     default:
-        assert(dst_type == node_type::I256);
-        return static_cast<inode_256*>(pdst)->add(std::move(leaf_ptr), key_byte);
+        assert(dst_tag == node_type::I256);
+        return static_cast<inode_256*>(pdst.get())->add(std::move(leaf_ptr), key_byte);
     }
 }
 
@@ -321,8 +340,7 @@ inline typename db<P>::iterator db<P>::emplace_hint_key_args(iterator hint, fast
 {
     // Fast path for insert(lower_bound())
     if (hint.match(key)) {
-        leaf_type* const pdst = static_cast<leaf_type*>(hint.node());
-        pdst->push_front(std::forward<Args>(args)...);
+        hint.leaf()->push_front(std::forward<Args>(args)...);
         return hint;
     }
     return get_iterator(emplace_key_args(multi_container(), key, std::forward<Args>(args)...));
@@ -332,14 +350,18 @@ template <typename P>
 template <typename Source>
 inline typename db<P>::iterator db<P>::shrink_node(iterator pos)
 {
-    auto src = static_cast<Source*>(pos.parent());
+    const auto node = pos.parent();
+    assert(node.tag() == Source::static_type());
+
+    auto src = static_cast<Source*>(node.get());
     if (BOOST_LIKELY(!src->is_min_size())) {
         src->remove(pos.index());
     } else {
         // If allocation fails here, the original node will be left untouched,
         // which gives the shrinking operation the strong exception safety guarantee
-        auto smaller = make_smaller_node(*src, pos.index());
-        release_to_parent(src->self_iterator(), std::move(smaller));
+        auto src_iter = src->self_iterator(node.tag());
+        auto smaller = make_tagged_ptr(make_smaller_node(*src, pos.index()));
+        assign_to_parent(src_iter, smaller);
         // All went well, we can deallocate the original node
         deallocate(src);
     }
@@ -348,7 +370,7 @@ inline typename db<P>::iterator db<P>::shrink_node(iterator pos)
 
 template <typename P> inline typename db<P>::iterator db<P>::internal_erase(iterator pos)
 {
-    assert(pos && pos.type() == node_type::LEAF);
+    assert(pos && pos.tag() == node_type::LEAF);
 
     iterator after_erase;
 
@@ -364,7 +386,7 @@ template <typename P> inline typename db<P>::iterator db<P>::internal_erase(iter
         // Remove the value from to the parent node.
         // If that node is already of minimum size, then a new smaller
         // node will be created without the value to remove.
-        switch (leaf_parent->type()) {
+        switch (leaf_parent.tag()) {
         case node_type::I4:
             after_erase = shrink_node<inode_4>(pos);
             break;
@@ -375,25 +397,24 @@ template <typename P> inline typename db<P>::iterator db<P>::internal_erase(iter
             after_erase = shrink_node<inode_48>(pos);
             break;
         default:
-            assert(leaf_parent->type() == node_type::I256);
+            assert(leaf_parent.tag() == node_type::I256);
             after_erase = shrink_node<inode_256>(pos);
         }
     }
 
     // All went well, we can deallocate the leaf
-    deallocate(static_cast<leaf_type*>(pos.node()));
+    deallocate(pos.leaf());
     return after_erase;
 }
 
 template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_type key)
 {
-    auto bitk = make_bitwise_key_prefix(key);
-    auto pos = internal_locate(bitk);
+    auto pos = internal_locate(key);
 
     size_type removed = 0;
 
     if (pos.match(key)) {
-        removed = static_cast<leaf_type*>(pos.node())->size();
+        removed = pos.leaf()->size();
         internal_erase(iterator(pos));
     }
 
@@ -420,7 +441,7 @@ template <typename P> inline void db<P>::swap(self_t& other) noexcept
 template <typename P> inline void db<P>::clear()
 {
     if (!empty()) {
-        delete_subtree(tree.root);
+        deallocate(tree.root);
         assert(leaf_count() == 0);
         tree.root = nullptr;
     }
@@ -428,8 +449,8 @@ template <typename P> inline void db<P>::clear()
 
 template <typename P> inline void db<P>::dump(std::ostream& os) const
 {
-    os << "leaf size = " << sizeof(leaf_type) << ", current memory use = " << current_memory_use()
-       << '\n';
+    os << "leaf size = " << sizeof(leaf_type) << ", inode size = " << sizeof(inode)
+       << ", current memory use = " << current_memory_use() << '\n';
     inode::dump(os, tree.root);
 }
 

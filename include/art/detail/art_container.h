@@ -25,7 +25,7 @@ public:
 private:
     using multi_container = typename Traits::multi_container;
     using node_base = typename Traits::node_base;
-    using node_ptr = node_base*;
+    using node_ptr = typename Traits::node_ptr;
     using fast_key_type = typename Traits::fast_key_type;
     using leaf_type = typename Traits::leaf_type;
 
@@ -65,8 +65,8 @@ public:
     using difference_type = typename Traits::difference_type;
     using key_compare = typename Traits::key_compare;
     using allocator_type = typename Traits::allocator_type;
-    using iterator = tree_iterator<Traits, node_base, inode>;
-    using const_iterator = tree_iterator<const Traits, node_base, inode>;
+    using iterator = tree_iterator<Traits, node_ptr, inode>;
+    using const_iterator = tree_iterator<const Traits, node_ptr, inode>;
     using reverse_iterator = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
@@ -110,7 +110,7 @@ public:
     ~db() noexcept(std::is_nothrow_destructible<mapped_type>::value)
     {
         if (!empty())
-            delete_subtree(tree.root);
+            deallocate(tree.root);
     }
 
     // Allocator routines
@@ -146,38 +146,23 @@ public:
     iterator find(fast_key_type key) noexcept { return iterator(internal_find(key)); }
     const_iterator find(fast_key_type key) const noexcept { return internal_find(key); }
 
-    iterator lower_bound(fast_key_type key) noexcept;
-    const_iterator lower_bound(fast_key_type key) const noexcept;
-    template <class K> iterator lower_bound(const K& key);
-    template <class K> const_iterator lower_bound(const K& key) const;
+    iterator lower_bound(fast_key_type key) noexcept { return iterator(internal_lower_bound(key)); }
+    const_iterator lower_bound(fast_key_type key) const noexcept
+    {
+        return internal_lower_bound(key);
+    }
 
     iterator upper_bound(fast_key_type key);
     const_iterator upper_bound(fast_key_type key) const;
-    template <class K> iterator upper_bound(const K& key);
-    template <class K> const_iterator upper_bound(const K& key) const;
 
     // Since C++20
-    bool contains(fast_key_type key) const noexcept
-    {
-        auto bitk = make_bitwise_key_prefix(key);
-        return internal_locate(bitk).match(bitk.first);
-    }
-    template <class K> bool contains(const K& key) const;
+    bool contains(fast_key_type key) const noexcept { return internal_locate(key).match(key); }
 
     std::pair<iterator, iterator> equal_range(fast_key_type key)
     {
         return std::make_pair(lower_bound(key), upper_bound(key));
     }
     std::pair<const_iterator, const_iterator> equal_range(fast_key_type key) const
-    {
-        return std::make_pair(lower_bound(key), upper_bound(key));
-    }
-
-    template <class K> std::pair<iterator, iterator> equal_range(const K& key)
-    {
-        return std::make_pair(lower_bound(key), upper_bound(key));
-    }
-    template <class K> std::pair<const_iterator, const_iterator> equal_range(const K& key) const
     {
         return std::make_pair(lower_bound(key), upper_bound(key));
     }
@@ -272,6 +257,7 @@ private:
     }
 
     [[nodiscard]] const_iterator internal_locate(bitwise_key_prefix& key) const noexcept;
+    [[nodiscard]] const_iterator internal_locate(fast_key_type key) const noexcept;
     [[nodiscard]] const_iterator internal_find(fast_key_type key) const noexcept;
 
     template <typename... Args>
@@ -311,22 +297,6 @@ private:
         return std::get<counter<Node>>(count_).instances;
     }
 
-    static constexpr inode* inode_cast(node_ptr node) noexcept { return static_cast<inode*>(node); }
-
-    template <typename Node> unique_node_ptr<Node, self_t> make_unique_node_ptr(Node* node) noexcept
-    {
-        assert(node != nullptr);
-        using ptr_type = unique_node_ptr<Node, self_t>;
-        return ptr_type(node, node_deleter<Node, self_t>(*this));
-    }
-
-    void delete_subtree(node_ptr node) noexcept
-    {
-        auto delete_on_scope_exit = make_unique_node_ptr(node);
-        if (node->type() != node_type::LEAF)
-            inode_cast(node)->delete_subtree(*this);
-    }
-
     template <typename Node, typename... Args>
     unique_node_ptr<Node, self_t> make_node_ptr(Args&&... args);
 
@@ -342,7 +312,10 @@ private:
     void deallocate(leaf_type* leaf) noexcept(std::is_nothrow_destructible<mapped_type>::value);
     void deallocate(node_ptr node) noexcept(std::is_nothrow_destructible<mapped_type>::value);
 
-    template <typename NodePtr> void release_to_parent(const_iterator hint, NodePtr child) noexcept;
+    template <typename Node>
+    void deallocate_subtree(Node* node) noexcept(std::is_nothrow_destructible<mapped_type>::value);
+
+    void assign_to_parent(const_iterator hint, node_ptr child) noexcept;
 
     template <typename NodePtr>
     iterator create_inode_4(const_iterator hint, bitwise_key prefix, NodePtr pdst,
@@ -361,11 +334,18 @@ private:
         return make_node_ptr<typename Node::smaller_inode_type>(src, child_to_delete);
     }
 
-    [[nodiscard]] unique_node_ptr<node_base, self_t> make_smaller_node(
-        inode_4& src, std::uint8_t child_to_delete) noexcept
+    [[nodiscard]] node_ptr make_smaller_node(inode_4& src, std::uint8_t child_to_delete) noexcept
     {
-        return src.leave_last_child(child_to_delete, *this);
+        return src.leave_last_child(child_to_delete);
     }
+
+    template <typename Node>
+    [[nodiscard]] node_ptr make_tagged_ptr(unique_node_ptr<Node, self_t> node) noexcept
+    {
+        return node_ptr::create(node.release(), Node::static_type());
+    }
+
+    [[nodiscard]] static constexpr node_ptr make_tagged_ptr(node_ptr p) noexcept { return p; }
 
     template <typename Source> iterator shrink_node(iterator pos);
 
@@ -379,7 +359,7 @@ private:
         {
         }
         compress_empty_base(compress_empty_base&& rhs) = default;
-        node_ptr root{nullptr};
+        node_ptr root{};
     } tree;
 
     template <typename T> struct counter {

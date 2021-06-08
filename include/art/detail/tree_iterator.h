@@ -3,6 +3,7 @@
 #define ART_DETAIL_ART_ITERATOR_HEADER_INCLUDED
 
 #include "art_node_base.h"
+#include "node_type.h"
 
 #include <type_traits>
 
@@ -16,10 +17,9 @@ namespace detail
 // Forward declaration of the container
 template <typename Traits> class db;
 
-template <typename Traits, typename Node, typename INode> class tree_iterator
+template <typename Traits, typename NodePtr, typename INode> class tree_iterator
 {
     using bitwise_key = typename Traits::bitwise_key;
-    using key_size_type = typename bitwise_key::size_type;
 
     static constexpr bool is_const = std::is_const<Traits>::value;
     using fast_key_type = typename Traits::fast_key_type;
@@ -58,14 +58,14 @@ public:
     template <typename OtherTraits,
               typename = typename std::is_same<std::remove_cv_t<Traits>,
                                                std::remove_cv_t<OtherTraits>>::type>
-    explicit constexpr tree_iterator(const tree_iterator<OtherTraits, Node, INode>& rhs) noexcept
+    explicit constexpr tree_iterator(const tree_iterator<OtherTraits, NodePtr, INode>& rhs) noexcept
         : node_(rhs.node())
         , parent_(rhs.parent())
         , pos_in_parent(rhs.index())
     {
     }
 
-    constexpr tree_iterator(Node* node, unsigned int index, INode* parent = nullptr) noexcept
+    constexpr tree_iterator(NodePtr node, unsigned int index, NodePtr parent = NodePtr{}) noexcept
         : node_(node)
         , parent_(parent)
         , pos_in_parent(index)
@@ -106,7 +106,7 @@ public:
     template <typename OtherTraits,
               typename = typename std::is_same<std::remove_cv_t<Traits>,
                                                std::remove_cv_t<OtherTraits>>::type>
-    tree_iterator& operator=(const tree_iterator<OtherTraits, Node, INode>& rhs) noexcept
+    tree_iterator& operator=(const tree_iterator<OtherTraits, NodePtr, INode>& rhs) noexcept
     {
         node_ = rhs.node();
         parent_ = rhs.parent();
@@ -114,37 +114,37 @@ public:
         return *this;
     }
 
-    [[nodiscard]] Node* node() const noexcept { return node_; }
-    [[nodiscard]] INode* parent() const noexcept { return parent_; }
+    [[nodiscard]] NodePtr node() const noexcept { return node_; }
+    [[nodiscard]] NodePtr parent() const noexcept { return parent_; }
     [[nodiscard]] unsigned int index() const noexcept { return pos_in_parent; }
 
 private:
     using traits_type = std::remove_const_t<Traits>;
 
-    friend INode;
     friend db<traits_type>;
+    friend INode;
 
-    [[nodiscard]] node_type type() const noexcept { return node_->type(); }
-
-    [[nodiscard]] static bool is_leaf(const Node* node) noexcept
+    [[nodiscard]] node_type tag() const noexcept { return node_.tag(); }
+    [[nodiscard]] static bool is_leaf(const NodePtr node) noexcept
     {
-        return node && (node->type() == node_type::LEAF);
+        return node && node.tag() == node_type::LEAF;
     }
     [[nodiscard]] bool is_leaf() const noexcept { return is_leaf(node_); }
     [[nodiscard]] bool match(fast_key_type key) const noexcept
     {
         return is_leaf() && node_->prefix() == bitwise_key(key);
     }
-    [[nodiscard]] key_size_type prefix_length() const noexcept { return node_->prefix_length(); }
-    [[nodiscard]] key_size_type shared_prefix_length(bitwise_key key) const noexcept
+
+    [[nodiscard]] typename Traits::node_base* node_base() const noexcept { return node_.get(); }
+    [[nodiscard]] real_leaf_type* leaf() const noexcept
     {
-        return node_->shared_prefix_length(key);
+        return static_cast<real_leaf_type*>(node_base());
     }
 
     [[nodiscard]] reference iter_deref() const noexcept
     {
         assert(is_leaf(node_));
-        leaf_type* const l = static_cast<leaf_type*>(node_);
+        leaf_type* const l = static_cast<leaf_type*>(node_.get());
         return Traits::value_ref(l->prefix().unpack(), l->value());
     }
 
@@ -161,6 +161,8 @@ private:
             return;
         }
 
+        assert(parent_.tag() != node_type::LEAF);
+
         do {
             ++pos_in_parent;
             if (pos_in_parent < INode::capacity(parent_)) {
@@ -174,7 +176,7 @@ private:
             }
 
             // Parent node has been exhausted. Try going one level up
-            *this = parent_->self_iterator();
+            *this = static_cast<INode*>(parent_.get())->self_iterator(parent_.tag());
         } while (parent_ != nullptr);
     }
 
@@ -205,27 +207,26 @@ private:
     }
 
 private:
-    // The node in the tree the iterator is pointing at
-    Node* node_;
-    // Parent of the current node. Also, the position below is within this parent
-    INode* parent_;
+    // node_: The node in the tree the iterator is pointing at
+    // parent_: Parent of the current node
+    NodePtr node_, parent_;
     // The position within the parent node of the node.
     unsigned int pos_in_parent;
 };
 
 // Enable comparisons between differently cv-qualified nodes
 template <
-    typename Traits1, typename Traits2, typename Node, typename INode,
+    typename Traits1, typename Traits2, typename NodePtr, typename INode,
     typename = typename std::is_same<std::remove_cv_t<Traits1>, std::remove_cv_t<Traits2>>::type>
-inline bool operator==(const tree_iterator<Traits1, Node, INode>& lhs,
-                       const tree_iterator<Traits2, Node, INode>& rhs) noexcept
+inline bool operator==(const tree_iterator<Traits1, NodePtr, INode>& lhs,
+                       const tree_iterator<Traits2, NodePtr, INode>& rhs) noexcept
 {
     return lhs.node() == rhs.node() && lhs.parent() == rhs.parent() && lhs.index() == rhs.index();
 }
 
-template <typename Traits1, typename Traits2, typename Node, typename INode>
-inline bool operator!=(const tree_iterator<Traits1, Node, INode>& lhs,
-                       const tree_iterator<Traits2, Node, INode>& rhs) noexcept
+template <typename Traits1, typename Traits2, typename NodePtr, typename INode>
+inline bool operator!=(const tree_iterator<Traits1, NodePtr, INode>& lhs,
+                       const tree_iterator<Traits2, NodePtr, INode>& rhs) noexcept
 {
     return !(lhs == rhs);
 }

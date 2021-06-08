@@ -163,8 +163,8 @@ template <typename C> inline void fifo(benchmark::State& state)
 
 #define GENERATE_BENCH_SET(TestName, Container, ...)                                               \
     GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(std::Container, __VA_ARGS__));                  \
-    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(std::multi##Container, __VA_ARGS__));           \
     GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(art::Container, __VA_ARGS__));                  \
+    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(std::multi##Container, __VA_ARGS__));           \
     GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(art::multi##Container, __VA_ARGS__))            \
     /**/
 

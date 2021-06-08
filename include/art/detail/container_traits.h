@@ -1,8 +1,10 @@
-#ifndef ART_CONTAINER_TRAITS_HEADER_INCLUDED
-#define ART_CONTAINER_TRAITS_HEADER_INCLUDED
+#ifndef ART_DETAIL_CONTAINER_TRAITS_HEADER_INCLUDED
+#define ART_DETAIL_CONTAINER_TRAITS_HEADER_INCLUDED
 
 #include "basic_leaf.h"
 #include "bitwise_key.h"
+#include "node_type.h"
+#include "tagged_ptr.h"
 
 namespace art
 {
@@ -30,10 +32,13 @@ struct container_traits {
     // the spewed error messages would be at least potentially parsable.
     using bitwise_key = bitwise_key_t<Key, Compare>;
     using node_base = art_node_base<bitwise_key>;
+    // Using 3 bits in the node pointer for the tag, which means that nodes must
+    // be aligned to 8 byte boundary.
+    using node_ptr = tagged_ptr<node_base, tagged::direct<node_base, 3, node_type>>;
     using leaf_type = basic_leaf<bitwise_key, mapped_type, allocator_type>;
 };
 
 } // namespace detail
 } // namespace art
 
-#endif // ART_CONTAINER_TRAITS_HEADER_INCLUDED
+#endif // ART_DETAIL_CONTAINER_TRAITS_HEADER_INCLUDED

@@ -24,6 +24,12 @@ private:
 template <typename Node, typename Db>
 using unique_node_ptr = std::unique_ptr<Node, node_deleter<Node, Db>>;
 
+template <typename Node, typename Db>
+inline unique_node_ptr<Node, Db> make_unique_node_ptr(Node* node, Db& db) noexcept
+{
+    return unique_node_ptr<Node, Db>(node, node_deleter<Node, Db>(db));
+}
+
 } // namespace detail
 } // namespace art
 

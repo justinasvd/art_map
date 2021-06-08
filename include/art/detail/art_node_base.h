@@ -11,21 +11,16 @@ namespace art
 namespace detail
 {
 
-enum class node_type : std::uint8_t { LEAF, I4, I16, I48, I256 };
-
 // Common base for various node types and leaves. This common base ensures that
 // common functionality could be achieved though the base pointer.
 template <typename BitwiseKey> struct art_node_base {
     using bitwise_key = BitwiseKey;
     using key_size_type = typename BitwiseKey::size_type;
 
-    constexpr art_node_base(node_type type, bitwise_key key) noexcept
+    explicit constexpr art_node_base(bitwise_key key) noexcept
         : header(key)
-        , type_(type)
     {
     }
-
-    [[nodiscard]] constexpr node_type type() const noexcept { return type_; }
 
     [[nodiscard]] constexpr bitwise_key prefix() const noexcept { return header; }
     [[nodiscard]] constexpr std::uint8_t front() const noexcept { return header.front(); }
@@ -46,33 +41,6 @@ template <typename BitwiseKey> struct art_node_base {
     constexpr void shift_left(std::uint8_t key) noexcept { header.shift_left_resize(key); }
     constexpr void shift_left(bitwise_key key) noexcept { header.shift_left_resize(key); }
 
-    void dump(std::ostream& os) const
-    {
-        switch (type()) {
-        case node_type::LEAF:
-            os << "LEAF: key =";
-            dump(os, header, header.max_size());
-            break;
-        case node_type::I4:
-            os << "I4:";
-            dump(os, header);
-            break;
-        case node_type::I16:
-            os << "I16:";
-            dump(os, header);
-            break;
-        case node_type::I48:
-            os << "I48:";
-            dump(os, header);
-            break;
-        default:
-            assert(type() == node_type::I256);
-            os << "I256:";
-            dump(os, header);
-            break;
-        }
-    }
-
     // Dump bitwise key prefix
     static void dump(std::ostream& os, bitwise_key key, key_size_type len)
     {
@@ -81,7 +49,7 @@ template <typename BitwiseKey> struct art_node_base {
     }
     static void dump(std::ostream& os, bitwise_key key)
     {
-        os << " key prefix len = " << static_cast<std::size_t>(key.size());
+        os << "key prefix len = " << static_cast<std::size_t>(key.size());
         if (key.size()) {
             os << ", key prefix =";
             dump(os, key, key.size());
@@ -90,7 +58,6 @@ template <typename BitwiseKey> struct art_node_base {
 
 private:
     BitwiseKey header;
-    const node_type type_;
 };
 
 } // namespace detail

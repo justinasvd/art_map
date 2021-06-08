@@ -5,7 +5,6 @@
 #include "fast_const_argument.h"
 
 #include <memory>
-#include <type_traits>
 
 namespace art
 {
@@ -19,13 +18,12 @@ struct basic_leaf final : public art_node_base<BitwiseKey> {
     using allocator_type = Alloc;
     using allocator_traits = std::allocator_traits<Alloc>;
     using bitwise_key = BitwiseKey;
-    using key_size_type = typename BitwiseKey::size_type;
     using parent_type = art_node_base<BitwiseKey>;
     using key_type = typename bitwise_key::key_type;
     using fast_key_type = fast_const_argument_t<key_type>;
 
     explicit constexpr basic_leaf(fast_key_type key) noexcept
-        : parent_type(node_type::LEAF, bitwise_key(key))
+        : parent_type(bitwise_key(key))
     {
     }
 
@@ -58,6 +56,13 @@ struct basic_leaf final : public art_node_base<BitwiseKey> {
 
     [[noreturn]] static void push_back(T&&) { throw std::runtime_error("basic_leaf: push_back"); }
 
+    void dump(std::ostream& os) const
+    {
+        os << "key =";
+        parent_type::dump(os, this->prefix(), this->prefix().max_size());
+        os << ", value = " << value();
+    }
+
 private:
     [[nodiscard]] T* addr() noexcept { return reinterpret_cast<T*>(&data); }
     [[nodiscard]] const T* addr() const noexcept { return reinterpret_cast<const T*>(&data); }
@@ -73,13 +78,12 @@ struct basic_leaf<BitwiseKey, std::integral_constant<T, V>, Alloc> final
     using value_type = std::integral_constant<T, V>;
     using allocator_type = Alloc;
     using bitwise_key = BitwiseKey;
-    using key_size_type = typename BitwiseKey::size_type;
     using parent_type = art_node_base<BitwiseKey>;
     using key_type = typename bitwise_key::key_type;
     using fast_key_type = fast_const_argument_t<key_type>;
 
     explicit constexpr basic_leaf(fast_key_type key) noexcept
-        : parent_type(node_type::LEAF, bitwise_key(key))
+        : parent_type(bitwise_key(key))
     {
     }
 
@@ -97,6 +101,12 @@ struct basic_leaf<BitwiseKey, std::integral_constant<T, V>, Alloc> final
     [[noreturn]] static void push_back(value_type)
     {
         throw std::runtime_error("basic_leaf: push_back");
+    }
+
+    void dump(std::ostream& os) const
+    {
+        os << "key =";
+        parent_type::dump(os, this->prefix(), this->prefix().max_size());
     }
 };
 

@@ -11,6 +11,7 @@ int main()
 
     art::map<key_type, value_type, std::less<key_type>> db;
 
+    std::cout << "Inserting...\n";
     for (key_type i = 0; i < max_keys; ++i) {
         const key_type key = 1818 + i;
         const value_type value = 1 + i;
@@ -23,15 +24,19 @@ int main()
         assert(p.first->first == key && p.first->second == value);
     }
 
-    db.emplace(181819, 1);
+    auto p = db.emplace(std::numeric_limits<key_type>::max(), max_keys);
+    assert(p.second);
+    assert(db.size() == max_keys + 1);
+    std::cout << "Inserted " << db.size() << " elements, with average "
+              << (static_cast<double>(db.current_memory_use()) / db.size())
+              << " bytes per element\n";
 
-    std::cout << "After erase:\n";
+    std::cout << "Erasing...\n";
     for (key_type i = 4; i < max_keys; ++i) {
         std::size_t cnt = db.erase(1818 + i);
         assert(cnt == 1);
     }
-
-    // db.erase(181819);
+    db.erase(std::numeric_limits<key_type>::max());
 
     db.dump(std::cout);
 
