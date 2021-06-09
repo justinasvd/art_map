@@ -100,13 +100,16 @@ template <typename Int, typename Order> struct int_bitwise_compare {
     using bitkey_type = typename boost::uint_t<sizeof(Int) * CHAR_BIT>::fast;
     using compare_t = bitwise_compare<bitkey_type, Order>;
 
+    static constexpr std::size_t num_digits = std::numeric_limits<bitkey_type>::digits;
+    static constexpr bitkey_type sign_bit = static_cast<bitkey_type>(1) << (num_digits - 1);
+
     [[nodiscard]] inline static constexpr bitkey_type byte_swap(Int k) noexcept
     {
-        return compare_t::byte_swap(static_cast<bitkey_type>(-k));
+        return compare_t::byte_swap(static_cast<bitkey_type>(k) ^ sign_bit);
     }
     [[nodiscard]] inline static constexpr Int unpack(bitkey_type k) noexcept
     {
-        return -static_cast<Int>(compare_t::unpack(k));
+        return static_cast<Int>(compare_t::unpack(k) ^ sign_bit);
     }
 };
 
