@@ -16,13 +16,13 @@ static constexpr unsigned int max_values = 1000000;
 // Seed for the sample generators
 static constexpr unsigned int seed = 123456789;
 
-template <typename C> inline auto bench_dataset()
+template <typename C> [[nodiscard]] inline auto bench_dataset()
 {
     using value_t = test::remove_key_const_t<typename C::value_type>;
     return test::generate_values<value_t, max_values>(seed);
 }
 
-template <typename C> inline auto fill_container(C& c)
+template <typename C> [[nodiscard]] inline auto fill_container(C& c)
 {
     auto values = bench_dataset<C>();
     c.insert(values.begin(), values.end());

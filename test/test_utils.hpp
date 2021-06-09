@@ -13,6 +13,14 @@ namespace test
 namespace detail
 {
 
+template <typename T> struct caster {
+    [[nodiscard]] static T apply(unsigned int m) noexcept { return static_cast<T>(m); }
+};
+
+template <typename T> struct caster<T*> {
+    [[nodiscard]] static T* apply(unsigned int m) noexcept { return reinterpret_cast<T*>(m << 3); }
+};
+
 // Identity generator
 template <typename T> struct generator {
     explicit constexpr generator(unsigned int m) noexcept
@@ -20,10 +28,10 @@ template <typename T> struct generator {
     {
     }
 
-    T operator()(unsigned int i) const noexcept
+    [[nodiscard]] T operator()(unsigned int i) const noexcept
     {
         assert(i <= max_value);
-        return T(i);
+        return caster<T>::apply(i);
     }
 
 private:
@@ -31,7 +39,7 @@ private:
 };
 
 // String generator
-inline constexpr std::size_t num_digits(std::size_t n) noexcept
+[[nodiscard]] inline constexpr std::size_t num_digits(std::size_t n) noexcept
 {
     return n < 10 ? 1 : num_digits(n / 10) + 1;
 }
@@ -44,7 +52,7 @@ template <> struct generator<std::string> {
 
     // Generates strings of minimum length `max_digits`.
     // Appends leading zeros if the number of digits of `i` is smaller
-    std::string operator()(unsigned int i) const
+    [[nodiscard]] std::string operator()(unsigned int i) const
     {
         const unsigned int digits = num_digits(i);
         return std::string(max_digits > digits ? max_digits - digits : 0, '0')
@@ -62,7 +70,11 @@ template <typename T, typename U> struct generator<std::pair<T, U>> {
         , ugen(m)
     {
     }
-    std::pair<T, U> operator()(unsigned int i) const { return std::make_pair(tgen(i), ugen(i)); }
+
+    [[nodiscard]] std::pair<T, U> operator()(unsigned int i) const
+    {
+        return std::make_pair(tgen(i), ugen(i));
+    }
 
 private:
     generator<std::remove_const_t<T>> tgen;
@@ -99,8 +111,8 @@ template <typename U, typename V> struct value_of_value<std::pair<U, V>> {
 template <typename T> using remove_key_const_t = typename detail::remove_key_const<T>::type;
 
 // Generate n values for our tests and benchmarks. Value range is [0, maxval].
-inline std::vector<unsigned int> generate_numbers(unsigned int seed, unsigned int n,
-                                                  unsigned int max_value)
+[[nodiscard]] inline std::vector<unsigned int> generate_numbers(unsigned int seed, unsigned int n,
+                                                                unsigned int max_value)
 {
     std::vector<unsigned int> values;
     std::set<unsigned int> unique_values;
@@ -125,7 +137,8 @@ inline std::vector<unsigned int> generate_numbers(unsigned int seed, unsigned in
 }
 
 // Generates values in the range [0, 4 * N]
-template <typename T, unsigned int N> inline std::vector<T> generate_values(unsigned int seed)
+template <typename T, unsigned int N>
+[[nodiscard]] inline std::vector<T> generate_values(unsigned int seed)
 {
     static_assert(N != 0, "Generated set of values cannot be empty");
 
@@ -147,14 +160,14 @@ template <typename T, unsigned int N> inline std::vector<T> generate_values(unsi
 
 // Should not take as a parameter a temporary, since this function returns
 // a reference to the key, instead of making a full copy
-template <typename T> inline auto key_of_value(const T& value) noexcept
+template <typename T> [[nodiscard]] inline auto key_of_value(const T& value) noexcept
 {
     return detail::key_of_value<T>::get(value);
 }
 
 // Should not take as a parameter a temporary, since this function returns
 // a reference to the key, instead of making a full copy
-template <typename T> inline auto value_of_value(const T& value) noexcept
+template <typename T> [[nodiscard]] inline auto value_of_value(const T& value) noexcept
 {
     return detail::value_of_value<T>::get(value);
 }

@@ -123,10 +123,12 @@ template <typename Compare> struct unsigned_integral_bitwise_key {
     using key_type = typename Compare::key_type;
     static_assert(sizeof(bitkey_type) == sizeof(key_type), "Invalid key size");
 
-    using size_type = std::uint8_t;
+    // std::uint8_t would be sufficient here, but it leads to poorer
+    // performance in benchmarks.
+    using size_type = unsigned int;
     static constexpr size_type num_bytes = sizeof(key_type);
 
-    static constexpr size_type max_size() noexcept { return num_bytes; }
+    [[nodiscard]] static constexpr size_type max_size() noexcept { return num_bytes; }
 
     constexpr unsigned_integral_bitwise_key() noexcept = default;
     explicit constexpr unsigned_integral_bitwise_key(key_type k) noexcept

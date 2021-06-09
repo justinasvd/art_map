@@ -323,12 +323,14 @@ inline std::pair<typename db<P>::iterator, bool> db<P>::emplace_key_args(std::fa
                           should_insert);
 }
 
-template <typename Iterator> inline Iterator get_iterator(Iterator it) noexcept
+template <typename Iterator>
+[[nodiscard]] inline constexpr Iterator get_iterator(Iterator it) noexcept
 {
     return it;
 }
 
-template <typename Iterator> inline Iterator get_iterator(std::pair<Iterator, bool> p) noexcept
+template <typename Iterator>
+[[nodiscard]] inline constexpr Iterator get_iterator(std::pair<Iterator, bool> p) noexcept
 {
     return p.first;
 }
