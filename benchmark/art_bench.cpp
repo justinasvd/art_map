@@ -157,24 +157,20 @@ template <typename C> inline void fifo(benchmark::State& state)
     }
 }
 
-#define GENERATE_BENCH_FUNCTION(TestName, Container) BENCHMARK_TEMPLATE(TestName, Container)
-
-#define MERGE_TOKENS(T, ...) T __VA_OPT__(, ) __VA_ARGS__
-
-#define GENERATE_BENCH_SET(TestName, Container, ...)                                               \
-    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(std::Container, __VA_ARGS__));                  \
-    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(art::Container, __VA_ARGS__));                  \
-    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(std::multi##Container, __VA_ARGS__));           \
-    GENERATE_BENCH_FUNCTION(TestName, MERGE_TOKENS(art::multi##Container, __VA_ARGS__))            \
+#define GENERATE_BENCH_SET(TestName, ...)                                                          \
+    BENCHMARK_TEMPLATE(TestName, std::__VA_ARGS__);                                                \
+    BENCHMARK_TEMPLATE(TestName, art::__VA_ARGS__);                                                \
+    BENCHMARK_TEMPLATE(TestName, std::multi##__VA_ARGS__);                                         \
+    BENCHMARK_TEMPLATE(TestName, art::multi##__VA_ARGS__)                                          \
     /**/
 
-#define GENERATE_BENCHMARKS(Container, ...)                                                        \
-    GENERATE_BENCH_SET(fwditer, Container, __VA_ARGS__);                                           \
-    GENERATE_BENCH_SET(find, Container, __VA_ARGS__);                                              \
-    GENERATE_BENCH_SET(find_sorted, Container, __VA_ARGS__);                                       \
-    GENERATE_BENCH_SET(insert, Container, __VA_ARGS__);                                            \
-    GENERATE_BENCH_SET(erase, Container, __VA_ARGS__);                                             \
-    GENERATE_BENCH_SET(fifo, Container, __VA_ARGS__)                                               \
+#define GENERATE_BENCHMARKS(...)                                                                   \
+    GENERATE_BENCH_SET(fwditer, __VA_ARGS__);                                                      \
+    GENERATE_BENCH_SET(find, __VA_ARGS__);                                                         \
+    GENERATE_BENCH_SET(find_sorted, __VA_ARGS__);                                                  \
+    GENERATE_BENCH_SET(insert, __VA_ARGS__);                                                       \
+    GENERATE_BENCH_SET(erase, __VA_ARGS__);                                                        \
+    GENERATE_BENCH_SET(fifo, __VA_ARGS__)                                                          \
     /**/
 
 GENERATE_BENCHMARKS(set<int>);
