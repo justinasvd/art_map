@@ -212,11 +212,12 @@ template <typename Db, unsigned MinSize, unsigned Capacity, node_type NodeType,
           class SmallerDerived, class LargerDerived, class Derived>
 class basic_inode : public basic_inode_impl<Db>
 {
-    static_assert(NodeType != node_type::LEAF);
-    static_assert(!std::is_same<Derived, LargerDerived>::value);
-    static_assert(!std::is_same<SmallerDerived, Derived>::value);
-    static_assert(!std::is_same<SmallerDerived, LargerDerived>::value);
-    static_assert(MinSize < Capacity);
+    static_assert(NodeType != node_type::LEAF, "An inode cannot have a leaf tag");
+    static_assert(!std::is_same<Derived, LargerDerived>::value, "grow(inode) -> inode");
+    static_assert(!std::is_same<SmallerDerived, Derived>::value, "shrink(inode) -> inode");
+    static_assert(!std::is_same<SmallerDerived, LargerDerived>::value,
+                  "shrink(inode) -> grow(inode)");
+    static_assert(MinSize < Capacity, "Misconfigured inode capacity: min size >= capacity");
 
     using parent_type = basic_inode_impl<Db>;
 
@@ -302,7 +303,8 @@ template <typename Db> class basic_inode_4 : public basic_inode_4_parent<Db>
     using iterator = typename Db::iterator;
 
 public:
-    using typename parent_type::basic_inode;
+    // Forward parent's c-tors here
+    using basic_inode_4_parent<Db>::basic_inode_4_parent;
 
     constexpr basic_inode_4(const inode16_type& source_node, std::uint8_t child_to_delete)
         : parent_type(source_node)
@@ -936,9 +938,10 @@ private:
     union children_union {
         std::array<node_ptr, basic_inode_48::capacity> pointer_array;
 #if defined(__SSE2__)
-        static_assert(basic_inode_48::capacity % 2 == 0);
+        static_assert(basic_inode_48::capacity % 2 == 0, "inode_48 capacity is odd");
         // To support unrolling without remainder
-        static_assert((basic_inode_48::capacity / 2) % 4 == 0);
+        static_assert((basic_inode_48::capacity / 2) % 4 == 0,
+                      "inode_48 cannot support unrolling without remainder");
         // No std::array below because it would ignore the alignment attribute
         // NOLINTNEXTLINE(modernize-avoid-c-arrays)
         __m128i pointer_vector[basic_inode_48::capacity / 2]; // NOLINT(runtime/arrays)
