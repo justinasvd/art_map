@@ -33,12 +33,14 @@ value being erased.
 The code uses SSE4.1 intrinsics (Nehalem and higher). This is in contrast to
 the original ART paper needing SSE2 only.
 
-The following minimum versions are required to build the library:
+The following minimum versions are required to use the library:
 
 * GCC 6.1
 * Clang 3.4
 
-See [Platform-Specific Build Instructions](#platform-specific-build-instructions).
+Also, the code depends on Boost libraries. Minimum Boost version 1.60 is recommended.
+
+See [Building tests and benchmarks](#building-tests-and-benchmarks).
 
 ## Building tests and benchmarks
 
@@ -56,7 +58,7 @@ $ cmake -E make_directory "build"
 $ cmake -E chdir "build" cmake -DCMAKE_BUILD_TYPE=Release ../
 # or, starting with CMake 3.13, use a simpler form:
 # cmake -DCMAKE_BUILD_TYPE=Release -S . -B "build"
-# Build the library.
+# Build tests and benchmarks.
 $ cmake --build "build" --config Release
 ```
 

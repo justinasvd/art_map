@@ -136,13 +136,13 @@ private:
     [[nodiscard]] typename Traits::node_base* node_base() const noexcept { return node_.get(); }
     [[nodiscard]] real_leaf_type* leaf() const noexcept
     {
+        assert(is_leaf());
         return static_cast<real_leaf_type*>(node_base());
     }
 
     [[nodiscard]] reference iter_deref() const noexcept
     {
-        assert(is_leaf(node_));
-        leaf_type* const l = static_cast<leaf_type*>(node_.get());
+        leaf_type* const l = leaf();
         return Traits::value_ref(l->prefix().unpack(), l->value());
     }
 

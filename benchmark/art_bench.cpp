@@ -29,6 +29,13 @@ template <typename C> [[nodiscard]] inline auto fill_container(C& c)
     return values;
 }
 
+template <typename C, typename V> inline void fill_container(C& c, V&& values)
+{
+    for (auto& v : values) {
+        c.insert(std::move(v));
+    }
+}
+
 template <typename T> inline void do_not_optimize(const T& value)
 {
     benchmark::DoNotOptimize(test::value_of_value(value));
@@ -40,9 +47,7 @@ template <typename C> inline void fwditer(benchmark::State& state)
     C container;
 
     // Fill the container
-    for (auto& v : bench_dataset<C>()) {
-        container.insert(std::move(v));
-    }
+    fill_container(container, bench_dataset<C>());
 
     auto it = container.begin();
 
@@ -102,10 +107,7 @@ template <typename C> void find_sorted(benchmark::State& state)
     {
         auto sorted = values; // Make a copy
         std::sort(sorted.begin(), sorted.end());
-
-        for (auto& v : sorted) {
-            container.insert(std::move(v));
-        }
+        fill_container(container, std::move(sorted));
     }
 
     auto it = values.begin();
@@ -146,14 +148,17 @@ template <typename C> inline void erase(benchmark::State& state)
 template <typename C> inline void fifo(benchmark::State& state)
 {
     C container;
-    const auto values = fill_container(container);
+    fill_container(container, bench_dataset<C>());
 
-    auto it = values.begin();
+    auto it = container.begin();
+
     for (auto _ : state) {
-        container.erase(container.begin());
-        container.insert(container.end(), *it);
-        if (++it == values.end())
-            it = values.begin();
+        // Make a copy
+        typename C::value_type value_copy = *it;
+        it = container.erase(it);
+        container.insert(it, value_copy);
+        if (it == container.end())
+            it = container.begin();
     }
 }
 

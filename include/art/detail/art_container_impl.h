@@ -24,12 +24,15 @@ inline constexpr void shift_right(std::pair<BitwiseKey, typename BitwiseKey::siz
 template <typename P>
 inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix& key) const noexcept
 {
+    // By ensuring that the leaf tag is always 0, we can simplify inode filtering
+    // because nullptr pointers would serendipitously have 0 tags too
+    static_assert(static_cast<unsigned>(node_type::LEAF) == 0, "Leaf tag must be 0");
+
     const_iterator pos(tree.root, 0);
 
-    if (pos.node()) {
-        while (pos.tag() != node_type::LEAF) {
-            const node_base* nb = pos.node_base();
-            const key_size_type prefix_length = nb->prefix_length();
+    while (pos.tag() != node_type::LEAF) {
+        const node_base* nb = pos.node_base();
+        const key_size_type prefix_length = nb->prefix_length();
             if (key.second <= prefix_length || nb->shared_prefix_length(key.first) < prefix_length)
                 break;
 
@@ -38,9 +41,8 @@ inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix&
                 break;
             pos = child;
 
-            // Consume the explored prefix + 1 byte used during child lookup
-            shift_right(key, prefix_length + 1);
-        }
+        // Consume the explored prefix + 1 byte used during child lookup
+        shift_right(key, prefix_length + 1);
     }
 
     return pos;
