@@ -374,7 +374,7 @@ inline typename db<P>::iterator db<P>::shrink_node(iterator pos)
 
 template <typename P> inline typename db<P>::iterator db<P>::internal_erase(iterator pos)
 {
-    assert(pos.node() && pos.tag() == node_type::LEAF);
+    assert(pos.is_leaf());
 
     iterator after_erase;
 

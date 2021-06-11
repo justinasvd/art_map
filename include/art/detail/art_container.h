@@ -217,7 +217,7 @@ public:
     [[nodiscard]] constexpr size_type current_memory_use() const noexcept
     {
         return memory_use<leaf_type>() + memory_use<inode_4>() + memory_use<inode_16>() +
-               memory_use<inode_256>();
+               memory_use<inode_48>() + memory_use<inode_256>();
     }
 
     [[nodiscard]] constexpr size_type leaf_count() const noexcept { return get_count<leaf_type>(); }
