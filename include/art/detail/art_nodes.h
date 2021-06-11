@@ -187,8 +187,6 @@ protected:
 
     [[nodiscard]] constexpr node_ptr parent() const noexcept { return parent_.first; }
 
-    void leaf_index(std::uint8_t index) noexcept { parent_.second = index; }
-
     static constexpr void assign_parent(inode_type& inode, node_ptr parent,
                                         std::uint8_t index) noexcept
     {
@@ -252,13 +250,6 @@ public:
     [[nodiscard]] node_ptr tagged_self() noexcept { return node_ptr::create(this, NodeType); }
 
 protected:
-    explicit constexpr basic_inode(const SmallerDerived& source_node) noexcept
-        : basic_inode_impl<Db>(MinSize, source_node.prefix())
-    {
-        assert(source_node.is_full());
-        assert(is_min_size());
-    }
-
     explicit constexpr basic_inode(const LargerDerived& source_node) noexcept
         : basic_inode_impl<Db>(Capacity, source_node.prefix())
     {
@@ -302,10 +293,31 @@ template <typename Db> class basic_inode_4 : public basic_inode_4_parent<Db>
     using const_iterator = typename Db::const_iterator;
     using iterator = typename Db::iterator;
 
-public:
+private:
+    friend Db;
+
     // Forward parent's c-tors here
     using basic_inode_4_parent<Db>::basic_inode_4_parent;
 
+    [[nodiscard]] constexpr iterator populate(node_ptr child1, leaf_unique_ptr child2,
+                                              std::uint8_t key_byte) noexcept
+    {
+        assert(child1.tag() != node_type::LEAF);
+        child1->shift_right(this->prefix_length());
+        const std::uint8_t child1_key = child1->front();
+        child1->shift_right(1); // Consume front byte
+        return add_two_to_empty(child1_key, child1, key_byte, std::move(child2));
+    }
+
+    [[nodiscard]] constexpr iterator populate(leaf_type* child1, leaf_unique_ptr child2,
+                                              key_size_type offset) noexcept
+    {
+        const key_size_type trim = offset + this->prefix_length();
+        return add_two_to_empty(child1->prefix()[trim], node_ptr::create(child1, node_type::LEAF),
+                                child2->prefix()[trim], std::move(child2));
+    }
+
+public:
     constexpr basic_inode_4(const inode16_type& source_node, std::uint8_t child_to_delete)
         : parent_type(source_node)
     {
@@ -332,24 +344,6 @@ public:
 
         assert(std::is_sorted(keys.byte_array.cbegin(),
                               keys.byte_array.cbegin() + this->children_count));
-    }
-
-    iterator add_two_to_empty(node_ptr child1, leaf_unique_ptr child2,
-                              std::uint8_t key_byte) noexcept
-    {
-        assert(child1.tag() != node_type::LEAF);
-        child1->shift_right(this->prefix_length());
-        const std::uint8_t child1_key = child1->front();
-        child1->shift_right(1); // Consume front byte
-        return add_two_to_empty(child1_key, child1, key_byte, std::move(child2));
-    }
-
-    iterator add_two_to_empty(leaf_type* child1, leaf_unique_ptr child2,
-                              key_size_type offset) noexcept
-    {
-        const key_size_type trim = offset + this->prefix_length();
-        return add_two_to_empty(child1->prefix()[trim], node_ptr::create(child1, node_type::LEAF),
-                                child2->prefix()[trim], std::move(child2));
     }
 
     [[nodiscard]] constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
@@ -544,11 +538,17 @@ private:
     using const_iterator = typename Db::const_iterator;
     using iterator = typename Db::iterator;
 
-public:
-    constexpr basic_inode_16(unique_node_ptr<inode4_type, Db> source_node, leaf_unique_ptr child,
-                             std::uint8_t key_byte) noexcept
-        : parent_type(*source_node)
+private:
+    friend Db;
+
+    using basic_inode_16_parent<Db>::basic_inode_16_parent;
+
+    [[nodiscard]] constexpr iterator populate(unique_node_ptr<inode4_type, Db> source_node,
+                                              leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
+        assert(source_node->is_full());
+        assert(this->is_min_size());
+
         const auto keys_integer = source_node->keys.integer;
         const auto first_lt = ((keys_integer & 0xFFU) < key_byte) ? 1 : 0;
         const auto second_lt = (((keys_integer >> 8U) & 0xFFU) < key_byte) ? 1 : 0;
@@ -566,7 +566,7 @@ public:
 
         keys.byte_array[i] = static_cast<std::uint8_t>(key_byte);
         children[i] = node_ptr::create(child.release(), node_type::LEAF);
-        this->leaf_index(i);
+        iterator inserted(children[i], i, this->tagged_self());
         ++i;
 
         for (; i <= inode4_type::capacity; ++i) {
@@ -574,8 +574,10 @@ public:
             children[i] = source_node->children[i - 1];
             this->reparent(children[i], i);
         }
+        return inserted;
     }
 
+public:
     constexpr basic_inode_16(inode48_type& source_node, std::uint8_t child_to_delete) noexcept
         : parent_type(source_node)
     {
@@ -761,11 +763,17 @@ template <typename Db> class basic_inode_48 : public basic_inode_48_parent<Db>
     using const_iterator = typename Db::const_iterator;
     using iterator = typename Db::iterator;
 
-public:
-    constexpr basic_inode_48(unique_node_ptr<inode16_type, Db> source_node, leaf_unique_ptr child,
-                             std::uint8_t key_byte) noexcept
-        : parent_type(*source_node)
+private:
+    friend Db;
+
+    using basic_inode_48_parent<Db>::basic_inode_48_parent;
+
+    [[nodiscard]] constexpr iterator populate(unique_node_ptr<inode16_type, Db> source_node,
+                                              leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
+        assert(source_node->is_full());
+        assert(this->is_min_size());
+
         auto* const __restrict__ source_node_ptr = source_node.get();
 
         // TODO(laurynas): initialize at declaration
@@ -785,12 +793,15 @@ public:
         child_indices[key_byte] = inode16_type::capacity;
         children.pointer_array[inode16_type::capacity] =
             node_ptr::create(child.release(), node_type::LEAF);
-        this->leaf_index(key_byte);
+        iterator inserted(children.pointer_array[inode16_type::capacity], key_byte,
+                          this->tagged_self());
 
         std::fill(std::next(children.pointer_array.begin(), inode16_type::capacity + 1),
                   children.pointer_array.end(), nullptr);
+        return inserted;
     }
 
+public:
     constexpr basic_inode_48(inode256_type& source_node, std::uint8_t child_to_delete) noexcept
         : parent_type(source_node)
     {
@@ -966,11 +977,17 @@ template <typename Db> class basic_inode_256 : public basic_inode_256_parent<Db>
     using const_iterator = typename Db::const_iterator;
     using iterator = typename Db::iterator;
 
-public:
-    constexpr basic_inode_256(unique_node_ptr<inode48_type, Db> source_node, leaf_unique_ptr child,
-                              std::uint8_t key_byte) noexcept
-        : parent_type(*source_node)
+private:
+    friend Db;
+
+    using basic_inode_256_parent<Db>::basic_inode_256_parent;
+
+    [[nodiscard]] constexpr iterator populate(unique_node_ptr<inode48_type, Db> source_node,
+                                              leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
+        assert(source_node->is_full());
+        assert(this->is_min_size());
+
         unsigned children_copied = 0;
         unsigned i = 0;
         while (true) {
@@ -993,9 +1010,11 @@ public:
 
         assert(children[key_byte] == nullptr);
         children[key_byte] = node_ptr::create(child.release(), node_type::LEAF);
-        this->leaf_index(key_byte);
+
+        return iterator(children[key_byte], key_byte, this->tagged_self());
     }
 
+public:
     [[nodiscard]] constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(!this->is_full());

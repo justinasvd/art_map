@@ -317,9 +317,9 @@ private:
 
     void assign_to_parent(const_iterator hint, node_ptr child) noexcept;
 
-    template <typename NodePtr>
-    iterator create_inode_4(const_iterator hint, bitwise_key prefix, NodePtr pdst,
-                            leaf_unique_ptr leaf, key_size_type rem);
+    template <typename INode, typename NodePtr, typename SizeType>
+    iterator create_inode(const_iterator hint, bitwise_key prefix, NodePtr pdst,
+                          leaf_unique_ptr leaf, SizeType key);
 
     template <typename Source>
     iterator grow_node(const_iterator hint, node_ptr dest_node, leaf_unique_ptr leaf,

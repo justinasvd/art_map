@@ -180,14 +180,15 @@ inline void db<P>::assign_to_parent(const_iterator hint, node_ptr child) noexcep
 }
 
 template <typename P>
-template <typename NodePtr>
-inline typename db<P>::iterator db<P>::create_inode_4(const_iterator hint, bitwise_key prefix,
-                                                      NodePtr pdst, leaf_unique_ptr leaf,
-                                                      key_size_type rem)
+template <typename INode, typename NodePtr, typename SizeType>
+inline typename db<P>::iterator db<P>::create_inode(const_iterator hint, bitwise_key prefix,
+                                                    NodePtr pdst, leaf_unique_ptr leaf,
+                                                    SizeType key)
 {
-    auto in4 = make_node_ptr<inode_4>(prefix);
-    const iterator leaf_iter = in4->add_two_to_empty(pdst, std::move(leaf), rem);
-    assign_to_parent(hint, make_tagged_ptr(std::move(in4)));
+    auto inode = make_node_ptr<INode>(prefix);
+    const iterator leaf_iter = inode->populate(std::move(pdst), std::move(leaf), key);
+    assign_to_parent(hint, node_ptr::create(inode.get(), INode::static_type()));
+    inode.release(); // All went well, we can release the pointer
     return leaf_iter;
 }
 
@@ -205,15 +206,8 @@ inline typename db<P>::iterator db<P>::grow_node(const_iterator hint, node_ptr d
         return dst->add(std::move(leaf), key_byte);
     } else {
         // Destination node is full, needs to grow
-        auto leaf_tag = node_ptr::create(leaf.get(), node_type::LEAF);
-        auto larger = make_node_ptr<larger_inode>(make_unique_node_ptr(dst, *this), std::move(leaf),
-                                                  key_byte);
-        auto larger_tag = node_ptr::create(larger.get(), larger_inode::static_type());
-        // index() points to the leaf that we have just inserted into the larger node
-        const iterator leaf_iter(leaf_tag, larger->index(), larger_tag);
-        assign_to_parent(hint, larger_tag);
-        larger.release(); // All went well, release the node
-        return leaf_iter;
+        return create_inode<larger_inode>(hint, dst->prefix(), make_unique_node_ptr(dst, *this),
+                                          std::move(leaf), key_byte);
     }
 }
 
@@ -257,8 +251,8 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
         prefix.shift_right(depth);
         const key_size_type len = bitwise_key::shared_len(prefix, key.first, key.second - 1);
 
-        return create_inode_4(hint, bitwise_key::partial_key(prefix, len), pdst,
-                              std::move(leaf_ptr), depth);
+        return create_inode<inode_4>(hint, bitwise_key::partial_key(prefix, len), pdst,
+                                     std::move(leaf_ptr), depth);
     }
 
     // Some other node, not a leaf
@@ -269,8 +263,8 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
     {
         const bitwise_key shared_prefix = pdst->shared_prefix(key.first);
         if (shared_prefix.size() < prefix_len) {
-            return create_inode_4(hint, shared_prefix, pdst, std::move(leaf_ptr),
-                                  key.first[shared_prefix.size()]);
+            return create_inode<inode_4>(hint, shared_prefix, pdst, std::move(leaf_ptr),
+                                         key.first[shared_prefix.size()]);
         }
     }
 
