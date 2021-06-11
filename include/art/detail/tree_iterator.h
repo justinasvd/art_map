@@ -17,13 +17,16 @@ namespace detail
 // Forward declaration of the container
 template <typename Traits> class db;
 
-template <typename Traits, typename NodePtr, typename INode> class tree_iterator
+template <typename Traits, typename INode> class tree_iterator
 {
     using bitwise_key = typename Traits::bitwise_key;
 
-    static constexpr bool is_const = std::is_const<Traits>::value;
     using fast_key_type = typename Traits::fast_key_type;
     using real_leaf_type = typename Traits::leaf_type;
+
+    using node_ptr = typename Traits::node_ptr;
+
+    static constexpr bool is_const = std::is_const<INode>::value;
 
     // Const-corrected leaf type
     using leaf_type = std::conditional_t<is_const, const real_leaf_type, real_leaf_type>;
@@ -36,6 +39,12 @@ template <typename Traits, typename NodePtr, typename INode> class tree_iterator
         T vref;
         constexpr T* operator->() noexcept { return std::addressof(vref); }
     };
+
+    using inode_type = std::remove_const_t<INode>;
+
+    // Const and non-const versions of iterators are friends
+    friend tree_iterator<Traits, const INode>;
+    friend tree_iterator<Traits, inode_type>;
 
 public:
     using key_type = typename Traits::key_type;
@@ -55,17 +64,16 @@ public:
     tree_iterator(const tree_iterator& rhs) noexcept = default;
 
     // Enable copy construction between const and non-const iterators
-    template <typename OtherTraits,
-              typename = typename std::is_same<std::remove_cv_t<Traits>,
-                                               std::remove_cv_t<OtherTraits>>::type>
-    explicit constexpr tree_iterator(const tree_iterator<OtherTraits, NodePtr, INode>& rhs) noexcept
-        : node_(rhs.node())
-        , parent_(rhs.parent())
-        , pos_in_parent(rhs.index())
+    template <typename U>
+    explicit constexpr tree_iterator(const tree_iterator<Traits, U>& rhs) noexcept
+        : node_(rhs.node_)
+        , parent_(rhs.parent_)
+        , pos_in_parent(rhs.pos_in_parent)
     {
     }
 
-    constexpr tree_iterator(NodePtr node, unsigned int index, NodePtr parent = NodePtr{}) noexcept
+    explicit constexpr tree_iterator(node_ptr node, unsigned int index = 0,
+                                     node_ptr parent = node_ptr{}) noexcept
         : node_(node)
         , parent_(parent)
         , pos_in_parent(index)
@@ -101,29 +109,24 @@ public:
     }
 
     // Enable assignments between const and non-const iterators
-    template <typename OtherTraits,
-              typename = typename std::is_same<std::remove_cv_t<Traits>,
-                                               std::remove_cv_t<OtherTraits>>::type>
-    tree_iterator& operator=(const tree_iterator<OtherTraits, NodePtr, INode>& rhs) noexcept
+    template <typename U> tree_iterator& operator=(const tree_iterator<Traits, U>& rhs) noexcept
     {
-        node_ = rhs.node();
-        parent_ = rhs.parent();
-        pos_in_parent = rhs.index();
+        node_ = rhs.node_;
+        parent_ = rhs.parent_;
+        pos_in_parent = rhs.pos_in_parent;
         return *this;
     }
 
-    [[nodiscard]] NodePtr node() const noexcept { return node_; }
-    [[nodiscard]] NodePtr parent() const noexcept { return parent_; }
+    [[nodiscard]] node_ptr node() const noexcept { return node_; }
+    [[nodiscard]] node_ptr parent() const noexcept { return parent_; }
     [[nodiscard]] unsigned int index() const noexcept { return pos_in_parent; }
 
 private:
-    using traits_type = std::remove_const_t<Traits>;
-
-    friend db<traits_type>;
+    friend db<Traits>;
     friend INode;
 
     [[nodiscard]] node_type tag() const noexcept { return node_.tag(); }
-    [[nodiscard]] static bool is_leaf(const NodePtr node) noexcept
+    [[nodiscard]] static bool is_leaf(const node_ptr node) noexcept
     {
         return node && node.tag() == node_type::LEAF;
     }
@@ -174,7 +177,7 @@ private:
             }
 
             // Parent node has been exhausted. Try going one level up
-            *this = static_cast<INode*>(parent_.get())->self_iterator(parent_.tag());
+            *this = static_cast<inode_type*>(parent_.get())->self_iterator(parent_.tag());
         } while (parent_ != nullptr);
     }
 
@@ -207,24 +210,27 @@ private:
 private:
     // node_: The node in the tree the iterator is pointing at
     // parent_: Parent of the current node
-    NodePtr node_, parent_;
+    node_ptr node_, parent_;
     // The position within the parent node of the node.
     unsigned int pos_in_parent;
 };
 
 // Enable comparisons between differently cv-qualified nodes
 template <
-    typename Traits1, typename Traits2, typename NodePtr, typename INode,
-    typename = typename std::is_same<std::remove_cv_t<Traits1>, std::remove_cv_t<Traits2>>::type>
-inline bool operator==(const tree_iterator<Traits1, NodePtr, INode>& lhs,
-                       const tree_iterator<Traits2, NodePtr, INode>& rhs) noexcept
+    typename Traits, typename INode1, typename INode2,
+    typename = typename std::is_same<std::remove_cv_t<INode1>, std::remove_cv_t<INode2>>::type>
+inline bool operator==(const tree_iterator<Traits, INode1>& lhs,
+                       const tree_iterator<Traits, INode2>& rhs) noexcept
 {
-    return lhs.node() == rhs.node() && lhs.parent() == rhs.parent() && lhs.index() == rhs.index();
+    // It is not necessary to check that parents are the same -- node pointers
+    // must always be unique. However, we need to ensure that we don't inadvertedly
+    // report true for begin() == end(), when we compare root leaves
+    return lhs.node() == rhs.node() && lhs.index() == rhs.index();
 }
 
-template <typename Traits1, typename Traits2, typename NodePtr, typename INode>
-inline bool operator!=(const tree_iterator<Traits1, NodePtr, INode>& lhs,
-                       const tree_iterator<Traits2, NodePtr, INode>& rhs) noexcept
+template <typename Traits, typename INode1, typename INode2>
+inline bool operator!=(const tree_iterator<Traits, INode1>& lhs,
+                       const tree_iterator<Traits, INode2>& rhs) noexcept
 {
     return !(lhs == rhs);
 }

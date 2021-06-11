@@ -28,18 +28,18 @@ inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix&
     // because nullptr pointers would serendipitously have 0 tags too
     static_assert(static_cast<unsigned>(node_type::LEAF) == 0, "Leaf tag must be 0");
 
-    const_iterator pos(tree.root, 0);
+    const_iterator pos(tree.root);
 
     while (pos.tag() != node_type::LEAF) {
         const node_base* nb = pos.node_base();
         const key_size_type prefix_length = nb->prefix_length();
-            if (key.second <= prefix_length || nb->shared_prefix_length(key.first) < prefix_length)
-                break;
+        if (key.second <= prefix_length || nb->shared_prefix_length(key.first) < prefix_length)
+            break;
 
-            const auto child = inode::find_child(pos.node(), key.first[prefix_length]);
-            if (!child.node())
-                break;
-            pos = child;
+        const auto child = inode::find_child(pos.node(), key.first[prefix_length]);
+        if (!child.node())
+            break;
+        pos = child;
 
         // Consume the explored prefix + 1 byte used during child lookup
         shift_right(key, prefix_length + 1);
@@ -232,7 +232,7 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
     if (BOOST_UNLIKELY(empty())) {
         assert(!hint.node());
         tree.root = node_ptr::create(leaf_ptr.release(), node_type::LEAF);
-        return iterator(tree.root, 0);
+        return iterator(tree.root);
     }
 
     assert(hint.node());
