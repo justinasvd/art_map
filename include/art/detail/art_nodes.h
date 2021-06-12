@@ -169,7 +169,7 @@ public:
         }
     }
 
-    [[nodiscard]] constexpr std::uint8_t index() const noexcept { return parent_.second; }
+    [[nodiscard]] constexpr std::uint8_t index() const noexcept { return pos_in_parent; }
     [[nodiscard]] const_iterator self_iterator(node_type tag) noexcept
     {
         return const_iterator(node_ptr::create(this, tag), index(), parent());
@@ -181,16 +181,18 @@ protected:
     constexpr basic_inode_impl(unsigned min_size, bitwise_key key) noexcept
         : base_t(key)
         , parent_{}
+        , pos_in_parent{}
         , children_count(min_size)
     {
     }
 
-    [[nodiscard]] constexpr node_ptr parent() const noexcept { return parent_.first; }
+    [[nodiscard]] constexpr node_ptr parent() const noexcept { return parent_; }
 
     static constexpr void assign_parent(inode_type& inode, node_ptr parent,
                                         std::uint8_t index) noexcept
     {
-        inode.parent_ = parent_info(parent, index);
+        inode.parent_ = parent;
+        inode.pos_in_parent = index;
     }
 
     void dump(std::ostream& os) const
@@ -200,7 +202,8 @@ protected:
     }
 
 private:
-    parent_info parent_;
+    node_ptr parent_;
+    std::uint8_t pos_in_parent;
 
 protected:
     std::uint8_t children_count;
