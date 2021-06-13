@@ -169,24 +169,19 @@ public:
         }
     }
 
-    [[nodiscard]] constexpr std::uint8_t index() const noexcept { return pos_in_parent; }
     [[nodiscard]] const_iterator self_iterator(node_type tag) noexcept
     {
-        return const_iterator(node_ptr::create(this, tag), index(), parent());
+        return const_iterator(node_ptr::create(this, tag), pos_in_parent, parent_);
     }
 
 protected:
-    using parent_info = std::pair<node_ptr, std::uint8_t>;
-
-    constexpr basic_inode_impl(unsigned min_size, bitwise_key key) noexcept
+    constexpr basic_inode_impl(std::uint8_t min_size, bitwise_key key) noexcept
         : base_t(key)
         , parent_{}
         , pos_in_parent{}
         , children_count(min_size)
     {
     }
-
-    [[nodiscard]] constexpr node_ptr parent() const noexcept { return parent_; }
 
     static constexpr void assign_parent(inode_type& inode, node_ptr parent,
                                         std::uint8_t index) noexcept
@@ -198,7 +193,7 @@ protected:
     void dump(std::ostream& os) const
     {
         base_t::dump(os, this->prefix());
-        os << ", parent = " << parent().get() << " #children = " << num_children();
+        os << ", parent = " << parent_.get() << ", #children = " << num_children();
     }
 
 private:
@@ -1020,8 +1015,6 @@ private:
 public:
     [[nodiscard]] constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
-        assert(!this->is_full());
-
         assert(children[key_byte] == nullptr);
         children[key_byte] = node_ptr::create(child.release(), node_type::LEAF);
         ++this->children_count;

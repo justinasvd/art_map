@@ -334,13 +334,14 @@ private:
         return make_node_ptr<typename Node::smaller_inode_type>(src, child_to_delete);
     }
 
-    [[nodiscard]] node_ptr make_smaller_node(inode_4& src, std::uint8_t child_to_delete) noexcept
+    [[nodiscard]] static node_ptr make_smaller_node(inode_4& src,
+                                                    std::uint8_t child_to_delete) noexcept
     {
         return src.leave_last_child(child_to_delete);
     }
 
     template <typename Node>
-    [[nodiscard]] node_ptr make_tagged_ptr(unique_node_ptr<Node, self_t> node) noexcept
+    [[nodiscard]] static node_ptr make_tagged_ptr(unique_node_ptr<Node, self_t> node) noexcept
     {
         return node_ptr::create(node.release(), Node::static_type());
     }
