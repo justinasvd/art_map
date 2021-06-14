@@ -66,12 +66,11 @@ template <typename Key> struct bitwise_compare<Key, comparison_ops::greater_tag>
 
     [[nodiscard]] inline static constexpr Key byte_swap(Key k) noexcept
     {
-        // Flip bytes to Little Endian order (no-op on Little Endian architectures)
-        return boost::endian::native_to_little(k);
+        return boost::endian::native_to_big(~k);
     }
     [[nodiscard]] inline static constexpr Key unpack(Key k) noexcept
     {
-        return boost::endian::little_to_native(k);
+        return ~boost::endian::big_to_native(k);
     }
 };
 
