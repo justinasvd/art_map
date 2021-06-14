@@ -190,6 +190,12 @@ protected:
         inode.pos_in_parent = index;
     }
 
+    static constexpr void assign_parent(node_ptr inode, node_ptr parent,
+                                        std::uint8_t index) noexcept
+    {
+        assign_parent(*static_cast<inode_type*>(inode.get()), parent, index);
+    }
+
     void dump(std::ostream& os) const
     {
         base_t::dump(os, this->prefix());
@@ -258,8 +264,7 @@ protected:
     void reparent(node_ptr node, std::uint8_t index) noexcept
     {
         if (node.tag() != node_type::LEAF) {
-            parent_type::assign_parent(*static_cast<parent_type*>(node.get()), tagged_self(),
-                                       index);
+            parent_type::assign_parent(node, tagged_self(), index);
         }
     }
 };
@@ -365,7 +370,7 @@ public:
             children[i] = children[i - 1];
             this->reparent(children[i - 1], i);
         }
-        keys.byte_array[insert_pos_index] = static_cast<std::uint8_t>(key_byte);
+        keys.byte_array[insert_pos_index] = key_byte;
         children[insert_pos_index] = node_ptr::create(child.release(), node_type::LEAF);
 
         ++children_count;
@@ -409,8 +414,7 @@ public:
             // Now we have to prepend inode_4's prefix to the last remaining node
             child_to_leave_ptr->shift_left(keys.byte_array[child_to_leave]);
             child_to_leave_ptr->shift_left(this->prefix());
-            parent_type::assign_parent(
-                *static_cast<basic_inode_impl<Db>*>(child_to_leave_ptr.get()), node_ptr{}, 0);
+            parent_type::assign_parent(child_to_leave_ptr, node_ptr{}, 0);
         }
         return child_to_leave_ptr;
     }
@@ -562,7 +566,7 @@ private:
             this->reparent(children[i], i);
         }
 
-        keys.byte_array[i] = static_cast<std::uint8_t>(key_byte);
+        keys.byte_array[i] = key_byte;
         children[i] = node_ptr::create(child.release(), node_type::LEAF);
         iterator inserted(children[i], i, this->tagged_self());
         ++i;
@@ -894,10 +898,9 @@ public:
 
     [[nodiscard]] constexpr const_iterator find_child(std::uint8_t key_byte) noexcept
     {
-        if (child_indices[static_cast<std::uint8_t>(key_byte)] != empty_child) {
-            const auto child_i = child_indices[static_cast<std::uint8_t>(key_byte)];
-            return const_iterator(children.pointer_array[child_i],
-                                  static_cast<std::uint8_t>(key_byte), this->tagged_self());
+        if (child_indices[key_byte] != empty_child) {
+            const auto child_i = child_indices[key_byte];
+            return const_iterator(children.pointer_array[child_i], key_byte, this->tagged_self());
         }
         return const_iterator{};
     }

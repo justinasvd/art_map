@@ -132,6 +132,9 @@ inline void db<P>::deallocate(node_ptr node) noexcept(
     std::is_nothrow_destructible<mapped_type>::value)
 {
     switch (node.tag()) {
+    case node_type::LEAF:
+        deallocate(static_cast<leaf_type*>(node.get()));
+        break;
     case node_type::I4:
         deallocate_subtree(static_cast<inode_4*>(node.get()));
         break;
@@ -143,9 +146,6 @@ inline void db<P>::deallocate(node_ptr node) noexcept(
         break;
     case node_type::I256:
         deallocate_subtree(static_cast<inode_256*>(node.get()));
-        break;
-    case node_type::LEAF:
-        deallocate(static_cast<leaf_type*>(node.get()));
         break;
     default:
         ART_DETAIL_CANNOT_HAPPEN();
@@ -283,9 +283,10 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
         return grow_node<inode_16>(hint, pdst, std::move(leaf_ptr), key_byte);
     case node_type::I48:
         return grow_node<inode_48>(hint, pdst, std::move(leaf_ptr), key_byte);
-    default:
-        assert(dst_tag == node_type::I256);
+    case node_type::I256:
         return static_cast<inode_256*>(pdst.get())->add(std::move(leaf_ptr), key_byte);
+    default:
+        ART_DETAIL_CANNOT_HAPPEN();
     }
 }
 
@@ -394,9 +395,11 @@ template <typename P> inline typename db<P>::iterator db<P>::internal_erase(iter
         case node_type::I48:
             after_erase = shrink_node<inode_48>(pos);
             break;
-        default:
-            assert(leaf_parent.tag() == node_type::I256);
+        case node_type::I256:
             after_erase = shrink_node<inode_256>(pos);
+            break;
+        default:
+            ART_DETAIL_CANNOT_HAPPEN();
         }
     }
 
