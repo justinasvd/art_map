@@ -143,22 +143,26 @@ template <typename C> inline void erase(benchmark::State& state)
     }
 }
 
-// Insertion at end, removal from the beginning. This benchmark
-// counts two value constructors.
-template <typename C> inline void fifo(benchmark::State& state)
+// Sequentialy erases the container
+template <typename C> inline void erase_sequential(benchmark::State& state)
 {
     C container;
-    fill_container(container, bench_dataset<C>());
+    const auto values = fill_container(container);
 
     auto it = container.begin();
-
     for (auto _ : state) {
-        // Make a copy
-        typename C::value_type value_copy = *it;
+        // Remove
         it = container.erase(it);
-        container.insert(it, value_copy);
-        if (it == container.end())
+        do_not_optimize(&it);
+
+        // Reinsert values
+        if (it == container.end()) {
+            state.PauseTiming();
+            assert(container.empty());
+            container.insert(values.begin(), values.end());
             it = container.begin();
+            state.ResumeTiming();
+        }
     }
 }
 
@@ -175,7 +179,7 @@ template <typename C> inline void fifo(benchmark::State& state)
     GENERATE_BENCH_SET(find_sorted, __VA_ARGS__);                                                  \
     GENERATE_BENCH_SET(insert, __VA_ARGS__);                                                       \
     GENERATE_BENCH_SET(erase, __VA_ARGS__);                                                        \
-    GENERATE_BENCH_SET(fifo, __VA_ARGS__)                                                          \
+    GENERATE_BENCH_SET(erase_sequential, __VA_ARGS__)                                              \
     /**/
 
 GENERATE_BENCHMARKS(set<int>);

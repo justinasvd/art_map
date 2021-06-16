@@ -353,17 +353,19 @@ inline typename db<P>::iterator db<P>::shrink_node(iterator pos)
     assert(node.tag() == Source::static_type());
 
     auto src = static_cast<Source*>(node.get());
+    assert(pos.parent() == src->tagged_self());
+
     if (BOOST_LIKELY(!src->is_min_size())) {
         src->remove(pos.index());
     } else {
         // If allocation fails here, the original node will be left untouched,
         // which gives the shrinking operation the strong exception safety guarantee
-        auto src_iter = src->self_iterator(node.tag());
-        auto smaller = make_tagged_ptr(make_smaller_node(*src, pos.index()));
-        assign_to_parent(src_iter, smaller);
+        auto smaller = make_tagged_ptr(make_smaller_node(*src, pos));
+        assign_to_parent(src->self_iterator(), smaller);
         // All went well, we can deallocate the original node
         deallocate(src);
     }
+    pos.position -= 1;
     return pos;
 }
 
@@ -413,20 +415,11 @@ template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_typ
     auto pos = internal_locate(key);
 
     size_type removed = 0;
-
     if (pos.match(key)) {
         removed = pos.leaf()->size();
         internal_erase(iterator(pos));
     }
-
     return removed;
-}
-
-template <typename P> inline typename db<P>::iterator db<P>::erase(iterator first, iterator last)
-{
-    while (first != last)
-        first = erase(first);
-    return first;
 }
 
 template <typename P> inline void db<P>::swap(self_t& other) noexcept

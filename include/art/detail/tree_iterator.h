@@ -68,15 +68,15 @@ public:
     explicit constexpr tree_iterator(const tree_iterator<Traits, U>& rhs) noexcept
         : node_(rhs.node_)
         , parent_(rhs.parent_)
-        , pos_in_parent(rhs.pos_in_parent)
+        , position(rhs.position)
     {
     }
 
-    explicit constexpr tree_iterator(node_ptr node, unsigned int index = 0,
+    explicit constexpr tree_iterator(node_ptr node, int index = 0,
                                      node_ptr parent = node_ptr{}) noexcept
         : node_(node)
         , parent_(parent)
-        , pos_in_parent(index)
+        , position(index)
     {
     }
 
@@ -113,13 +113,15 @@ public:
     {
         node_ = rhs.node_;
         parent_ = rhs.parent_;
-        pos_in_parent = rhs.pos_in_parent;
+        position = rhs.position;
         return *this;
     }
 
     [[nodiscard]] node_ptr node() const noexcept { return node_; }
     [[nodiscard]] node_ptr parent() const noexcept { return parent_; }
-    [[nodiscard]] unsigned int index() const noexcept { return pos_in_parent; }
+    [[nodiscard]] int index() const noexcept { return position; }
+
+    void dump(std::ostream& os) const { INode::dump(os, parent_); }
 
 private:
     friend db<Traits>;
@@ -157,20 +159,22 @@ private:
         }
 
         if (BOOST_UNLIKELY(!parent_)) {
-            // Root node, just set the position to past-end state
-            pos_in_parent = 1;
+            // Root node, just set the position to past-end state.
+            // It's not demanded by the standard, but we implement this
+            // in such a way that end() == std::next(end())
+            position = std::min(position + 1, 1);
             return;
         }
 
         assert(parent_.tag() != node_type::LEAF);
 
         do {
-            ++pos_in_parent;
-            if (pos_in_parent < INode::capacity(parent_)) {
-                // Parent node is not yet exhausted, try to find a leftmost leaf
-                // from the current position.
-                auto leaf = INode::leftmost_leaf(parent_, pos_in_parent);
+            // Parent node is not yet exhausted, try to find a leftmost leaf
+            // from the current position.
+            if (position < 255) {
+                auto leaf = INode::leftmost_leaf(parent_, position + 1);
                 if (leaf.node()) {
+                    assert(leaf.parent() != nullptr);
                     *this = leaf;
                     return;
                 }
@@ -190,7 +194,7 @@ private:
 
         if (BOOST_UNLIKELY(!parent_)) {
             // Root node, just set the position to start state
-            pos_in_parent = 0;
+            position = 0;
             return;
         }
 
@@ -212,7 +216,7 @@ private:
     // parent_: Parent of the current node
     node_ptr node_, parent_;
     // The position within the parent node of the node.
-    unsigned int pos_in_parent;
+    int position;
 };
 
 // Enable comparisons between differently cv-qualified nodes

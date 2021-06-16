@@ -206,7 +206,11 @@ public:
 
     size_type erase(fast_key_type key);
     iterator erase(iterator pos) { return pos != end() ? std::next(internal_erase(pos)) : pos; }
-    iterator erase(iterator first, iterator last);
+
+    // Function iterator erase(iterator first, iterator last) is not provided
+    // because the ART iterators can invalidate, and there is no simple solution
+    // for maintaining the last iterator un-invalidated in order to check the end
+    // condition.
 
     void swap(self_t& other) noexcept;
     void clear();
@@ -329,15 +333,30 @@ private:
     // generalize the shrinking routine without stooping to strange hacks.
     template <typename Node>
     [[nodiscard]] unique_node_ptr<typename Node::smaller_inode_type, self_t> make_smaller_node(
-        Node& src, std::uint8_t child_to_delete)
+        Node& src, iterator& pos)
     {
-        return make_node_ptr<typename Node::smaller_inode_type>(src, child_to_delete);
+        auto inode = make_node_ptr<typename Node::smaller_inode_type>(src, pos.index());
+        pos.parent_ = inode->tagged_self();
+        pos.position = inode->index();
+        return inode;
     }
 
-    [[nodiscard]] static node_ptr make_smaller_node(inode_4& src,
-                                                    std::uint8_t child_to_delete) noexcept
+    [[nodiscard]] static node_ptr make_smaller_node(inode_4& src, iterator& pos) noexcept
     {
-        return src.leave_last_child(child_to_delete);
+        node_ptr last_child = src.leave_last_child(pos.index());
+        if (src.parent() == nullptr) {
+            if (pos.index() == 0 && last_child.tag() != node_type::LEAF) {
+                // Jump to the last child's tree
+                pos.parent_ = last_child;
+            } else {
+                pos.node_ = last_child;
+                pos.parent_ = nullptr;
+            }
+        } else {
+            pos.parent_ = src.parent();
+            pos.position = pos.index() + src.index();
+        }
+        return last_child;
     }
 
     template <typename Node>
