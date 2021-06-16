@@ -157,7 +157,7 @@ public:
 
     [[nodiscard]] const_iterator self_iterator(node_type tag) noexcept
     {
-        return const_iterator(node_ptr::create(this, tag), position, parent_);
+        return const_iterator(node_ptr(this, tag), position, parent_);
     }
 
 protected:
@@ -241,7 +241,7 @@ public:
 
     [[nodiscard]] static constexpr node_type static_type() noexcept { return NodeType; }
 
-    [[nodiscard]] node_ptr tagged_self() noexcept { return node_ptr::create(this, NodeType); }
+    [[nodiscard]] node_ptr tagged_self() noexcept { return node_ptr(this, NodeType); }
     [[nodiscard]] const_iterator self_iterator() noexcept
     {
         return const_iterator(tagged_self(), this->position, this->parent_);
@@ -310,7 +310,7 @@ private:
                                               key_size_type offset) noexcept
     {
         const key_size_type trim = offset + this->prefix_length();
-        return add_two_to_empty(child1->prefix()[trim], node_ptr::create(child1, node_type::LEAF),
+        return add_two_to_empty(child1->prefix()[trim], node_ptr(child1, node_type::LEAF),
                                 child2->prefix()[trim], std::move(child2));
     }
 
@@ -367,7 +367,7 @@ public:
             this->reparent(children[i - 1], i);
         }
         keys.byte_array[insert_pos_index] = key_byte;
-        children[insert_pos_index] = node_ptr::create(child.release(), node_type::LEAF);
+        children[insert_pos_index] = node_ptr(child.release(), node_type::LEAF);
 
         ++children_count;
         this->children_count = children_count;
@@ -497,7 +497,7 @@ protected:
         this->reparent(child1, key1_i);
 
         keys.byte_array[key2_i] = key2;
-        children[key2_i] = node_ptr::create(child2.release(), node_type::LEAF);
+        children[key2_i] = node_ptr(child2.release(), node_type::LEAF);
         keys.byte_array[2] = std::uint8_t{0};
         keys.byte_array[3] = std::uint8_t{0};
 
@@ -562,7 +562,7 @@ private:
         }
 
         keys.byte_array[i] = key_byte;
-        children[i] = node_ptr::create(child.release(), node_type::LEAF);
+        children[i] = node_ptr(child.release(), node_type::LEAF);
         iterator inserted(children[i], i, this->tagged_self());
 
         for (++i; i <= inode4_type::capacity; ++i) {
@@ -624,7 +624,7 @@ public:
                                children.begin() + children_count + 1);
         }
         keys.byte_array[insert_pos_index] = key_byte;
-        children[insert_pos_index] = node_ptr::create(child.release(), node_type::LEAF);
+        children[insert_pos_index] = node_ptr(child.release(), node_type::LEAF);
         ++children_count;
         this->children_count = children_count;
 
@@ -746,10 +746,13 @@ private:
 };
 
 template <typename C, typename T>
-inline typename C::iterator get_child_pos(C& c, std::uint8_t key_byte, T value) noexcept
+inline constexpr typename C::iterator get_child_pos(C& c, std::uint8_t key_byte, T value) noexcept
 {
-    return std::find_if_not(std::next(c.begin(), key_byte), c.end(),
-                            [value](typename C::value_type u) { return u == value; });
+    // This weird return statement is here to suppress the unused value warning,
+    // when the given value is a constant expression and the lambda does not actually
+    // refer to it at all. Specific to older g++ versions, e.g., 7.3
+    return (void)value, std::find_if_not(std::next(c.begin(), key_byte), c.end(),
+                                         [value](typename C::value_type u) { return u == value; });
 }
 
 template <typename Db>
@@ -795,8 +798,7 @@ private:
 
         assert(child_indices[key_byte] == empty_child);
         child_indices[key_byte] = inode16_type::capacity;
-        children.pointer_array[inode16_type::capacity] =
-            node_ptr::create(child.release(), node_type::LEAF);
+        children.pointer_array[inode16_type::capacity] = node_ptr(child.release(), node_type::LEAF);
         iterator inserted(children.pointer_array[inode16_type::capacity], key_byte,
                           this->tagged_self());
 
@@ -870,7 +872,7 @@ public:
 #endif // #if defined(__SSE4_2__)
         assert(children.pointer_array[i] == nullptr);
         child_indices[key_byte] = static_cast<std::uint8_t>(i);
-        children.pointer_array[i] = node_ptr::create(child.release(), node_type::LEAF);
+        children.pointer_array[i] = node_ptr(child.release(), node_type::LEAF);
         ++this->children_count;
 
         return iterator(children.pointer_array[i], key_byte, this->tagged_self());
@@ -1007,7 +1009,7 @@ private:
             children[i] = nullptr;
 
         assert(children[key_byte] == nullptr);
-        children[key_byte] = node_ptr::create(child.release(), node_type::LEAF);
+        children[key_byte] = node_ptr(child.release(), node_type::LEAF);
 
         return iterator(children[key_byte], key_byte, this->tagged_self());
     }
@@ -1016,7 +1018,7 @@ public:
     [[nodiscard]] constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(children[key_byte] == nullptr);
-        children[key_byte] = node_ptr::create(child.release(), node_type::LEAF);
+        children[key_byte] = node_ptr(child.release(), node_type::LEAF);
         ++this->children_count;
 
         return iterator(children[key_byte], key_byte, this->tagged_self());

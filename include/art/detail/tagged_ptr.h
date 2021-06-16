@@ -67,18 +67,11 @@ public:
     using const_pointer = std::add_const_t<pointer>;
     using reference = T&;
 
-    // No c-tors, no d-tors in order to ensure that the tagged pointer class template
-    // always has a standard layout.
-    [[nodiscard]] static constexpr tagged_ptr create(pointer ptr) noexcept
+    tagged_ptr() noexcept = default;
+    tagged_ptr(pointer ptr, tag_type init) noexcept
+        : ptr_(ptr)
     {
-        tagged_ptr p;
-        p.ptr_ = ptr;
-        return p;
-    }
-    [[nodiscard]] static constexpr tagged_ptr create(pointer ptr, tag_type init) noexcept
-    {
-        Policy::tag(ptr, init);
-        return create(ptr);
+        tag(init);
     }
 
     [[nodiscard]] pointer get() const noexcept { return Policy::extract(ptr_); }

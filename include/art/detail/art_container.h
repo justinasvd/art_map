@@ -249,6 +249,9 @@ protected:
         return emplace_key_args(multi_container(), key, std::forward<Args>(args)...);
     }
 
+    template <typename... Args>
+    [[nodiscard]] iterator emplace_hint_key_args(iterator hint, fast_key_type key, Args&&... args);
+
 private:
     using key_size_type = typename bitwise_key::size_type;
     using bitwise_key_prefix = std::pair<bitwise_key, key_size_type>;
@@ -274,9 +277,6 @@ private:
     template <typename... Args>
     [[nodiscard]] std::pair<iterator, bool> emplace_key_args(std::false_type, fast_key_type key,
                                                              Args&&... args);
-
-    template <typename... Args>
-    [[nodiscard]] iterator emplace_hint_key_args(iterator hint, fast_key_type key, Args&&... args);
 
     iterator internal_erase(iterator pos);
 
@@ -362,7 +362,7 @@ private:
     template <typename Node>
     [[nodiscard]] static node_ptr make_tagged_ptr(unique_node_ptr<Node, self_t> node) noexcept
     {
-        return node_ptr::create(node.release(), Node::static_type());
+        return node_ptr(node.release(), Node::static_type());
     }
 
     [[nodiscard]] static constexpr node_ptr make_tagged_ptr(node_ptr p) noexcept { return p; }

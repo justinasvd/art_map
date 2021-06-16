@@ -187,7 +187,7 @@ inline typename db<P>::iterator db<P>::create_inode(const_iterator hint, bitwise
 {
     auto inode = make_node_ptr<INode>(prefix);
     const iterator leaf_iter = inode->populate(std::move(pdst), std::move(leaf), key);
-    assign_to_parent(hint, node_ptr::create(inode.get(), INode::static_type()));
+    assign_to_parent(hint, node_ptr(inode.get(), INode::static_type()));
     inode.release(); // All went well, we can release the pointer
     return leaf_iter;
 }
@@ -225,7 +225,7 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
 
     if (BOOST_UNLIKELY(empty())) {
         assert(!hint.node());
-        tree.root = node_ptr::create(leaf_ptr.release(), node_type::LEAF);
+        tree.root = node_ptr(leaf_ptr.release(), node_type::LEAF);
         return iterator(tree.root);
     }
 
