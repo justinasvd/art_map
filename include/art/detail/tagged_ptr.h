@@ -50,8 +50,6 @@ struct direct final {
             throw std::overflow_error("tagged::direct: tag overflow");
         p = reinterpret_cast<T*>(ptr_bits(p) | static_cast<std::uintptr_t>(value));
     }
-
-    static void release(const T*) noexcept {} // Noop
 };
 
 } // namespace tagged
@@ -84,6 +82,11 @@ public:
     tagged_ptr& operator=(std::nullptr_t) noexcept
     {
         ptr_ = nullptr;
+        return *this;
+    }
+    tagged_ptr& operator=(pointer p) noexcept // Zero tag assignment
+    {
+        ptr_ = p;
         return *this;
     }
 

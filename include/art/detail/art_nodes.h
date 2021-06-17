@@ -202,6 +202,8 @@ template <typename Db, unsigned MinSize, unsigned Capacity, node_type NodeType,
           class SmallerDerived, class LargerDerived, class Derived>
 class basic_inode : public basic_inode_impl<Db>
 {
+    static_assert(static_cast<unsigned>(node_type::LEAF) == 0, "Leaf tag must be 0");
+
     static_assert(NodeType != node_type::LEAF, "An inode cannot have a leaf tag");
     static_assert(!std::is_same<Derived, LargerDerived>::value, "grow(inode) -> inode");
     static_assert(!std::is_same<SmallerDerived, Derived>::value, "shrink(inode) -> inode");
@@ -367,7 +369,7 @@ public:
             this->reparent(children[i - 1], i);
         }
         keys.byte_array[insert_pos_index] = key_byte;
-        children[insert_pos_index] = node_ptr(child.release(), node_type::LEAF);
+        children[insert_pos_index] = child.release();
 
         ++children_count;
         this->children_count = children_count;
@@ -497,7 +499,7 @@ protected:
         this->reparent(child1, key1_i);
 
         keys.byte_array[key2_i] = key2;
-        children[key2_i] = node_ptr(child2.release(), node_type::LEAF);
+        children[key2_i] = child2.release();
         keys.byte_array[2] = std::uint8_t{0};
         keys.byte_array[3] = std::uint8_t{0};
 
@@ -562,7 +564,7 @@ private:
         }
 
         keys.byte_array[i] = key_byte;
-        children[i] = node_ptr(child.release(), node_type::LEAF);
+        children[i] = child.release();
         iterator inserted(children[i], i, this->tagged_self());
 
         for (++i; i <= inode4_type::capacity; ++i) {
@@ -624,7 +626,7 @@ public:
                                children.begin() + children_count + 1);
         }
         keys.byte_array[insert_pos_index] = key_byte;
-        children[insert_pos_index] = node_ptr(child.release(), node_type::LEAF);
+        children[insert_pos_index] = child.release();
         ++children_count;
         this->children_count = children_count;
 
@@ -798,7 +800,7 @@ private:
 
         assert(child_indices[key_byte] == empty_child);
         child_indices[key_byte] = inode16_type::capacity;
-        children.pointer_array[inode16_type::capacity] = node_ptr(child.release(), node_type::LEAF);
+        children.pointer_array[inode16_type::capacity] = child.release();
         iterator inserted(children.pointer_array[inode16_type::capacity], key_byte,
                           this->tagged_self());
 
@@ -872,7 +874,7 @@ public:
 #endif // #if defined(__SSE4_2__)
         assert(children.pointer_array[i] == nullptr);
         child_indices[key_byte] = static_cast<std::uint8_t>(i);
-        children.pointer_array[i] = node_ptr(child.release(), node_type::LEAF);
+        children.pointer_array[i] = child.release();
         ++this->children_count;
 
         return iterator(children.pointer_array[i], key_byte, this->tagged_self());
@@ -1009,7 +1011,7 @@ private:
             children[i] = nullptr;
 
         assert(children[key_byte] == nullptr);
-        children[key_byte] = node_ptr(child.release(), node_type::LEAF);
+        children[key_byte] = child.release();
 
         return iterator(children[key_byte], key_byte, this->tagged_self());
     }
@@ -1018,7 +1020,7 @@ public:
     [[nodiscard]] constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(children[key_byte] == nullptr);
-        children[key_byte] = node_ptr(child.release(), node_type::LEAF);
+        children[key_byte] = child.release();
         ++this->children_count;
 
         return iterator(children[key_byte], key_byte, this->tagged_self());

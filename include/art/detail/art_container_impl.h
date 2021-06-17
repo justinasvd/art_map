@@ -188,7 +188,7 @@ inline typename db<P>::iterator db<P>::create_inode(const_iterator hint, bitwise
 {
     auto inode = make_node_ptr<INode>(prefix);
     const iterator leaf_iter = inode->populate(std::move(pdst), std::move(leaf), key);
-    assign_to_parent(hint, node_ptr(inode.get(), INode::static_type()));
+    assign_to_parent(hint, leaf_iter.parent());
     inode.release(); // All went well, we can release the pointer
     return leaf_iter;
 }
