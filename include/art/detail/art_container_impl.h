@@ -33,7 +33,8 @@ inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix&
     while (pos.tag() != node_type::LEAF) {
         const node_base* nb = pos.node_base();
         const key_size_type prefix_length = nb->prefix_length();
-        if (key.second <= prefix_length || nb->shared_prefix_length(key.first) < prefix_length)
+        if (prefix_length &&
+            (key.second <= prefix_length || nb->shared_prefix_length(key.first) < prefix_length))
             break;
 
         const auto child = inode::find_child(pos.node(), key.first[prefix_length]);
