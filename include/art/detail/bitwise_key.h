@@ -112,10 +112,6 @@ template <typename Int, typename Order> struct int_bitwise_compare {
     }
 };
 
-// Bitwise key is already pretty well laid out, but we pack it so that
-// the greedy compiler would not waste more memory than strictly necessary
-// in leaves and internal nodes. This packing shaves off 8 bytes for each leaf,
-// with negligible effect on overall performance.
 template <typename Compare> struct unsigned_integral_bitwise_key {
 
     using bitkey_type = typename Compare::bitkey_type;
