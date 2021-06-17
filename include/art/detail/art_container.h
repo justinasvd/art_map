@@ -344,7 +344,10 @@ private:
     [[nodiscard]] static node_ptr make_smaller_node(inode_4& src, iterator& pos) noexcept
     {
         node_ptr last_child = src.leave_last_child(pos.index());
-        if (src.parent() == nullptr) {
+        if (src.parent() != nullptr) {
+            pos.parent_ = src.parent();
+            pos.position = pos.index() + src.index();
+        } else {
             if (pos.index() == 0 && last_child.tag() != node_type::LEAF) {
                 // Jump to the last child's tree
                 pos.parent_ = last_child;
@@ -352,9 +355,6 @@ private:
                 pos.node_ = last_child;
                 pos.parent_ = nullptr;
             }
-        } else {
-            pos.parent_ = src.parent();
-            pos.position = pos.index() + src.index();
         }
         return last_child;
     }

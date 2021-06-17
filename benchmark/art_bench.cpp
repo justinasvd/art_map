@@ -16,10 +16,19 @@ static constexpr unsigned int max_values = 1000000;
 // Seed for the sample generators
 static constexpr unsigned int seed = 123456789;
 
+template <typename T> struct precomputed_dataset {
+    static const std::vector<T> values;
+    static std::vector<T> generate() { return test::generate_values<T, max_values>(seed); }
+};
+
+// Precompute static dataset for different value types
+template <typename T>
+const std::vector<T> precomputed_dataset<T>::values = precomputed_dataset<T>::generate();
+
 template <typename C> [[nodiscard]] inline auto bench_dataset()
 {
-    using value_t = test::remove_key_const_t<typename C::value_type>;
-    return test::generate_values<value_t, max_values>(seed);
+    using value_type = test::remove_key_const_t<typename C::value_type>;
+    return precomputed_dataset<value_type>::values;
 }
 
 template <typename C> [[nodiscard]] inline auto fill_container(C& c)
