@@ -204,6 +204,8 @@ public:
             insert(*first);
     }
 
+    size_type count(fast_key_type key) const noexcept;
+
     size_type erase(fast_key_type key);
     iterator erase(iterator pos) { return pos != end() ? std::next(internal_erase(pos)) : pos; }
 

@@ -411,6 +411,13 @@ template <typename P> inline typename db<P>::iterator db<P>::internal_erase(iter
     return after_erase;
 }
 
+template <typename P>
+inline typename db<P>::size_type db<P>::count(fast_key_type key) const noexcept
+{
+    auto pos = internal_locate(key);
+    return pos.match(key) ? pos.leaf()->size() : static_cast<size_type>(0);
+}
+
 template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_type key)
 {
     auto pos = internal_locate(key);
