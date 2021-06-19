@@ -6,7 +6,6 @@
 #include <boost/endian/conversion.hpp>
 #include <boost/integer.hpp>
 
-#include <array>
 #include <cassert>
 #include <climits>
 #include <functional>
@@ -212,9 +211,15 @@ private:
     constexpr void shift_left(size_type nbytes) noexcept { key.bits <<= (nbytes * CHAR_BIT); }
     constexpr void put_size(size_type len) noexcept { key.bytes[num_bytes - 1] = len; }
 
+    // Define a SIMD byte vector. This has an advantage over, say,
+    // std::array<std::uint8_t, num_bytes> that it tells the compiler in no uncertain terms that
+    // this thing in a SIMD vector and should be treated as such. Let the compiler do the heavy
+    // lifting how to optimize this beast.
+    typedef std::uint8_t byte_vec __attribute__((vector_size(sizeof(std::uint8_t) * num_bytes)));
+
     union {
         bitkey_type bits;
-        std::array<std::uint8_t, num_bytes> bytes;
+        byte_vec bytes;
     } key;
 };
 

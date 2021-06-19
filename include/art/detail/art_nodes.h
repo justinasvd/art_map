@@ -42,7 +42,7 @@ namespace detail
 
 #if defined(__SSE2__)
 // Idea from https://stackoverflow.com/a/32945715/80458
-inline auto _mm_cmple_epu8(__m128i x, __m128i y) noexcept
+inline __m128i _mm_cmple_epu8(__m128i x, __m128i y) noexcept
 {
     return _mm_cmpeq_epi8(_mm_max_epu8(y, x), y);
 }
@@ -274,6 +274,8 @@ public:
     fake_inode() = delete;
 };
 
+static constexpr std::uint8_t empty_child = 0xFF;
+
 template <typename Db>
 using basic_inode_4_parent =
     basic_inode<Db, 2, 4, node_type::I4, fake_inode, basic_inode_16<Db>, basic_inode_4<Db>>;
@@ -353,11 +355,7 @@ public:
 
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
 
-        const auto first_lt = ((keys.integer & 0xFFU) < key_byte) ? 1 : 0;
-        const auto second_lt = (((keys.integer >> 8U) & 0xFFU) < key_byte) ? 1 : 0;
-        const auto third_lt =
-            ((children_count == 3) && ((keys.integer >> 16U) & 0xFFU) < key_byte) ? 1 : 0;
-        const auto insert_pos_index = static_cast<unsigned>(first_lt + second_lt + third_lt);
+        const unsigned insert_pos_index = get_sorted_key_array_insert_position(key_byte);
 
         for (typename decltype(keys.byte_array)::size_type i = children_count; i > insert_pos_index;
              --i) {
@@ -395,6 +393,7 @@ public:
         }
 
         --children_count;
+        keys.byte_array[children_count] = empty_child;
         this->children_count = children_count;
 
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
@@ -485,23 +484,43 @@ public:
             parent_type::dump(os, children[i]);
     }
 
-protected:
+private:
+    [[nodiscard, gnu::pure]] constexpr unsigned get_sorted_key_array_insert_position(
+        std::uint8_t key_byte) const noexcept
+    {
+#if defined(__SSE2__)
+        const auto replicated_insert_key = _mm_set1_epi8(key_byte);
+        const auto keys_in_sse_reg = _mm_cvtsi32_si128(static_cast<std::int32_t>(keys.integer));
+        const auto lesser_keys = _mm_cmple_epu8(replicated_insert_key, keys_in_sse_reg);
+        // Put a sentry bit here, so that we know that lo_mask is never 0
+        const std::uint64_t lo_mask = (static_cast<std::uint64_t>(1) << 32) |
+                                      static_cast<std::uint64_t>(_mm_cvtsi128_si32(lesser_keys));
+        return __builtin_ctzl(lo_mask) >> 3;
+#else // No SSE2
+        const auto first_lt = ((keys.integer & 0xFFU) < key_byte) ? 1 : 0;
+        const auto second_lt = (((keys.integer >> 8U) & 0xFFU) < key_byte) ? 1 : 0;
+        const auto third_lt = (((keys.integer >> 16U) & 0xFFU) < key_byte) ? 1 : 0;
+        const auto fourth_lt = (((keys.integer >> 24U) & 0xFFU) < key_byte) ? 1 : 0;
+        return first_lt + second_lt + third_lt + fourth_lt;
+#endif
+    }
+
     constexpr iterator add_two_to_empty(std::uint8_t key1, node_ptr child1, std::uint8_t key2,
                                         leaf_unique_ptr&& child2) noexcept
     {
         assert(key1 != key2);
         assert(this->children_count == 2);
 
-        const std::uint8_t key1_i = key1 < key2 ? 0 : 1;
-        const std::uint8_t key2_i = key1_i == 0 ? 1 : 0;
+        const std::uint8_t key1_i = !(key1 < key2); // if key1 < key2 then 0, otherwise 1
+        const std::uint8_t key2_i = 1 - key1_i;
         keys.byte_array[key1_i] = key1;
         children[key1_i] = child1;
         this->reparent(child1, key1_i);
 
         keys.byte_array[key2_i] = key2;
         children[key2_i] = child2.release();
-        keys.byte_array[2] = std::uint8_t{0};
-        keys.byte_array[3] = std::uint8_t{0};
+        keys.byte_array[2] = empty_child;
+        keys.byte_array[3] = empty_child;
 
         assert(std::is_sorted(keys.byte_array.cbegin(),
                               keys.byte_array.cbegin() + this->children_count));
@@ -519,8 +538,6 @@ protected:
 private:
     friend basic_inode_16<Db>;
 };
-
-static constexpr std::uint8_t empty_child = 0xFF;
 
 template <typename Db>
 using basic_inode_16_parent = basic_inode<Db, 5, 16, node_type::I16, basic_inode_4<Db>,
@@ -549,12 +566,8 @@ private:
         assert(source_node->is_full());
         assert(this->is_min_size());
 
-        const auto keys_integer = source_node->keys.integer;
-        const auto first_lt = ((keys_integer & 0xFFU) < key_byte) ? 1 : 0;
-        const auto second_lt = (((keys_integer >> 8U) & 0xFFU) < key_byte) ? 1 : 0;
-        const auto third_lt = (((keys_integer >> 16U) & 0xFFU) < key_byte) ? 1 : 0;
-        const auto fourth_lt = (((keys_integer >> 24U) & 0xFFU) < key_byte) ? 1 : 0;
-        const unsigned insert_pos_index = first_lt + second_lt + third_lt + fourth_lt;
+        const unsigned insert_pos_index =
+            source_node->get_sorted_key_array_insert_position(key_byte);
 
         unsigned i = 0;
         for (; i < insert_pos_index; ++i) {
