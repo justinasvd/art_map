@@ -43,12 +43,12 @@ struct direct final {
         return static_cast<tag_type>(uintptr(p) & tag_mask);
     }
 
-    static constexpr void tag(T*& p, tag_type value)
+    static constexpr T* tag(const T* p, tag_type value)
     {
         // Take care that the tag value does not step on pointer bits
         if (BOOST_UNLIKELY(ptr_mask & static_cast<std::uintptr_t>(value)))
             throw std::overflow_error("tagged::direct: tag overflow");
-        p = reinterpret_cast<T*>(ptr_bits(p) | static_cast<std::uintptr_t>(value));
+        return reinterpret_cast<T*>(ptr_bits(p) | static_cast<std::uintptr_t>(value));
     }
 };
 
@@ -67,9 +67,8 @@ public:
 
     tagged_ptr() noexcept = default;
     tagged_ptr(pointer ptr, tag_type init) noexcept
-        : ptr_(ptr)
+        : ptr_(Policy::tag(ptr, init))
     {
-        tag(init);
     }
 
     [[nodiscard]] pointer get() const noexcept { return Policy::extract(ptr_); }
@@ -95,7 +94,7 @@ public:
     const_pointer operator->() const noexcept { return get(); }
 
     [[nodiscard]] tag_type tag() const noexcept { return Policy::tag(ptr_); }
-    void tag(tag_type value) { return Policy::tag(ptr_, value); }
+    void tag(tag_type value) { ptr_ = Policy::tag(ptr_, value); }
 
     [[nodiscard]] static tag_type tag(const_pointer p) noexcept { return Policy::tag(p); }
 

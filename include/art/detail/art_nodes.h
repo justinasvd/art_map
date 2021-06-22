@@ -1048,9 +1048,7 @@ public:
 
     [[nodiscard]] constexpr const_iterator find_child(std::uint8_t key_byte) noexcept
     {
-        if (children[key_byte] != nullptr)
-            return const_iterator(children[key_byte], key_byte, this->tagged_self());
-        return const_iterator{};
+        return const_iterator(children[key_byte], key_byte, this->tagged_self());
     }
 
     [[nodiscard]] constexpr const_iterator leftmost_child(std::uint8_t key_byte) noexcept
