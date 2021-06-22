@@ -47,7 +47,7 @@ template <typename C, typename V> inline void fill_container(C& c, V&& values)
 
 template <typename T> inline void do_not_optimize(const T& value)
 {
-    benchmark::DoNotOptimize(test::value_of_value(value));
+    benchmark::DoNotOptimize(test::key_of_value(value));
 }
 
 // Iteration (forward) through the tree

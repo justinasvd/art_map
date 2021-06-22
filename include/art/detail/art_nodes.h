@@ -259,9 +259,18 @@ protected:
 
     void reparent(node_ptr node, std::uint8_t index) noexcept
     {
-        if (node.tag() != node_type::LEAF) {
-            parent_type::assign_parent(node, tagged_self(), index);
-        }
+        // This ugly construct here is to make reparenting a branchless operation.
+        // The dummy below is a "parent sink" for leaves. All of this is here to avoid
+        // writing
+        // if (node.tag() != node_type::LEAF) {
+        //    parent_type::assign_parent(node, tagged_self(), index);
+        // }
+        std::aligned_storage_t<sizeof(parent_type), alignof(parent_type)> dev_null;
+        parent_type* parent_sink[2] = {reinterpret_cast<parent_type*>(&dev_null),
+                                       static_cast<parent_type*>(node.get())};
+
+        parent_type::assign_parent(*parent_sink[node.tag() != node_type::LEAF], tagged_self(),
+                                   index);
     }
 };
 
