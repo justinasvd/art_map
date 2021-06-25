@@ -138,11 +138,14 @@ private:
         return is_leaf() && node_->prefix() == key;
     }
 
-    [[nodiscard]] typename Traits::node_base* node_base() const noexcept { return node_.get(); }
+    [[nodiscard]] inode_type* inode() const noexcept
+    {
+        return static_cast<inode_type*>(node_.get());
+    }
     [[nodiscard]] real_leaf_type* leaf() const noexcept
     {
         assert(is_leaf());
-        return static_cast<real_leaf_type*>(node_base());
+        return static_cast<real_leaf_type*>(node_.get());
     }
 
     [[nodiscard]] reference iter_deref() const noexcept

@@ -90,38 +90,34 @@ public:
         return children_count != 0 ? static_cast<unsigned>(children_count) : 256;
     }
 
-    [[nodiscard]] static constexpr const_iterator find_child(node_ptr node,
-                                                             std::uint8_t key_byte) noexcept
+    template <typename Visitor>
+    [[nodiscard]] static auto constexpr dispatch_inode(node_ptr node, Visitor vis) noexcept
     {
+        assert(node.tag() != node_type::LEAF);
         switch (node.tag()) {
         case node_type::I4:
-            return static_cast<inode4_type*>(node.get())->find_child(key_byte);
+            return vis(*static_cast<inode4_type*>(node.get()));
         case node_type::I16:
-            return static_cast<inode16_type*>(node.get())->find_child(key_byte);
+            return vis(*static_cast<inode16_type*>(node.get()));
         case node_type::I48:
-            return static_cast<inode48_type*>(node.get())->find_child(key_byte);
+            return vis(*static_cast<inode48_type*>(node.get()));
         case node_type::I256:
-            return static_cast<inode256_type*>(node.get())->find_child(key_byte);
+            return vis(*static_cast<inode256_type*>(node.get()));
         default:
             ART_DETAIL_CANNOT_HAPPEN();
         }
     }
 
+    [[nodiscard]] static constexpr const_iterator find_child(node_ptr node,
+                                                             std::uint8_t key_byte) noexcept
+    {
+        return dispatch_inode(node, [key_byte](auto& inode) { return inode.find_child(key_byte); });
+    }
+
     [[nodiscard]] static constexpr const_iterator leftmost_child(node_ptr node,
                                                                  std::uint8_t start = 0) noexcept
     {
-        switch (node.tag()) {
-        case node_type::I4:
-            return static_cast<inode4_type*>(node.get())->leftmost_child(start);
-        case node_type::I16:
-            return static_cast<inode16_type*>(node.get())->leftmost_child(start);
-        case node_type::I48:
-            return static_cast<inode48_type*>(node.get())->leftmost_child(start);
-        case node_type::I256:
-            return static_cast<inode256_type*>(node.get())->leftmost_child(start);
-        default:
-            ART_DETAIL_CANNOT_HAPPEN();
-        }
+        return dispatch_inode(node, [start](auto& inode) { return inode.leftmost_child(start); });
     }
 
     [[nodiscard]] static constexpr const_iterator leftmost_leaf(node_ptr node,
@@ -163,10 +159,12 @@ public:
             os << "I48: ";
             static_cast<const inode48_type*>(node.get())->dump(os);
             break;
-        default:
-            assert(node.tag() == node_type::I256);
+        case node_type::I256:
             os << "I256: ";
             static_cast<const inode256_type*>(node.get())->dump(os);
+            break;
+        default:
+            ART_DETAIL_CANNOT_HAPPEN();
         }
     }
 

@@ -31,7 +31,7 @@ inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix&
     const_iterator pos(tree.root);
 
     while (pos.tag() != node_type::LEAF) {
-        const node_base* nb = pos.node_base();
+        const inode* nb = pos.inode();
         const key_size_type prefix_length = nb->prefix_length();
         if (prefix_length &&
             (key.second <= prefix_length || nb->shared_prefix_length(key.first) < prefix_length))
@@ -75,7 +75,7 @@ inline unique_node_ptr<Node, db<P>> db<P>::make_node_ptr(Args&&... args)
 {
     using unique_ptr_t = unique_node_ptr<Node, db<P>>;
 
-    using node_allocator_type = typename db_allocator_traits::rebind_alloc<Node>;
+    using node_allocator_type = typename db_allocator_traits::template rebind_alloc<Node>;
     using node_allocator_traits = std::allocator_traits<node_allocator_type>;
 
     node_allocator_type alloc(allocator());
@@ -104,7 +104,7 @@ template <typename P>
 template <typename Node>
 inline void db<P>::deallocate_node(Node* node) noexcept
 {
-    using node_allocator_type = typename db_allocator_traits::rebind_alloc<Node>;
+    using node_allocator_type = typename db_allocator_traits::template rebind_alloc<Node>;
     using node_allocator_traits = std::allocator_traits<node_allocator_type>;
 
     assert(count<Node>() != 0);
@@ -162,23 +162,8 @@ template <typename P> inline void db<P>::assign_to_parent(iterator hint, node_pt
 {
     if (BOOST_LIKELY(hint.parent() != nullptr)) {
         const auto parent = hint.parent();
-        assert(parent.tag() != node_type::LEAF);
-        switch (parent.tag()) {
-        case node_type::I4:
-            static_cast<inode_4*>(parent.get())->replace(hint, child);
-            break;
-        case node_type::I16:
-            static_cast<inode_16*>(parent.get())->replace(hint, child);
-            break;
-        case node_type::I48:
-            static_cast<inode_48*>(parent.get())->replace(hint, child);
-            break;
-        case node_type::I256:
-            static_cast<inode_256*>(parent.get())->replace(hint, child);
-            break;
-        default:
-            ART_DETAIL_CANNOT_HAPPEN();
-        }
+        inode::dispatch_inode(parent,
+                              [hint, child](auto& inode) { return inode.replace(hint, child); });
     } else {
         tree.root = child;
     }
@@ -198,14 +183,14 @@ inline typename db<P>::iterator db<P>::create_inode(iterator hint, bitwise_key p
 
 template <typename P>
 template <typename Source>
-inline typename db<P>::iterator db<P>::grow_node(iterator hint, node_ptr dest_node,
-                                                 leaf_unique_ptr leaf, std::uint8_t key_byte)
+inline typename db<P>::iterator db<P>::grow_node(iterator hint, leaf_unique_ptr leaf,
+                                                 std::uint8_t key_byte)
 {
     using larger_inode = typename Source::larger_inode_type;
 
-    assert(dest_node.tag() == Source::static_type());
+    assert(hint.tag() == Source::static_type());
 
-    auto dst = static_cast<Source*>(dest_node.get());
+    auto dst = static_cast<Source*>(hint.inode());
     if (BOOST_LIKELY(!dst->is_full())) {
         return dst->add(std::move(leaf), key_byte);
     } else {
@@ -259,14 +244,14 @@ inline typename db<P>::iterator db<P>::internal_emplace(iterator hint, bitwise_k
     }
 
     // Some other node, not a leaf
-    const node_ptr pdst = hint.node();
+    inode* const pdst = hint.inode();
     const key_size_type prefix_len = pdst->prefix_length();
 
     // If the prefix is not fully shared, split the prefix
     {
         const bitwise_key shared_prefix = pdst->shared_prefix(key.first);
         if (shared_prefix.size() < prefix_len) {
-            return create_inode<inode_4>(hint, shared_prefix, pdst, std::move(leaf_ptr),
+            return create_inode<inode_4>(hint, shared_prefix, hint.node(), std::move(leaf_ptr),
                                          key.first[shared_prefix.size()]);
         }
     }
@@ -281,13 +266,13 @@ inline typename db<P>::iterator db<P>::internal_emplace(iterator hint, bitwise_k
     // and the leaf will be added there.
     switch (dst_tag) {
     case node_type::I4:
-        return grow_node<inode_4>(hint, pdst, std::move(leaf_ptr), key_byte);
+        return grow_node<inode_4>(hint, std::move(leaf_ptr), key_byte);
     case node_type::I16:
-        return grow_node<inode_16>(hint, pdst, std::move(leaf_ptr), key_byte);
+        return grow_node<inode_16>(hint, std::move(leaf_ptr), key_byte);
     case node_type::I48:
-        return grow_node<inode_48>(hint, pdst, std::move(leaf_ptr), key_byte);
+        return grow_node<inode_48>(hint, std::move(leaf_ptr), key_byte);
     case node_type::I256:
-        return static_cast<inode_256*>(pdst.get())->add(std::move(leaf_ptr), key_byte);
+        return static_cast<inode_256*>(pdst)->add(std::move(leaf_ptr), key_byte);
     default:
         ART_DETAIL_CANNOT_HAPPEN();
     }

@@ -327,8 +327,7 @@ private:
                           SizeType key);
 
     template <typename Source>
-    iterator grow_node(iterator hint, node_ptr dest_node, leaf_unique_ptr leaf,
-                       std::uint8_t key_byte);
+    iterator grow_node(iterator hint, leaf_unique_ptr leaf, std::uint8_t key_byte);
 
     // Functions to convert a node to a smaller type of node. This allows to fully
     // generalize the shrinking routine without stooping to strange hacks.
