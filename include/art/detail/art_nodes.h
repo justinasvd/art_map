@@ -3,7 +3,7 @@
 
 #include "art_node_base.h"
 #include "dump_byte.h"
-#include "ffs_nonzero.h"
+#include "tzcnt.h"
 
 #if !defined(NDEBUG)
 #include <iostream>
@@ -46,7 +46,24 @@ inline __m128i _mm_cmple_epu8(__m128i x, __m128i y) noexcept
 {
     return _mm_cmpeq_epi8(_mm_max_epu8(y, x), y);
 }
-#endif
+
+inline unsigned int clamped_pos(__m128i x, unsigned int clamp) noexcept
+{
+    // This is not as inefficient as it seems. If sufficiently advanced instruction
+    // set is used by the compiler, then the result of _mm_movemask_epi8 will be
+    // clamped by a single bzhi instruction.
+    return static_cast<unsigned int>(_mm_movemask_epi8(x)) & ((1u << clamp) - 1u);
+}
+
+inline unsigned int cmpeq_key_mask(__m128i x, __m128i y, unsigned int clamp) noexcept
+{
+    return clamped_pos(_mm_cmpeq_epi8(x, y), clamp);
+}
+inline unsigned int cmple_key_position(__m128i x, __m128i y, unsigned int clamp) noexcept
+{
+    return _mm_popcnt_u32(clamped_pos(_mm_cmple_epu8(x, y), clamp));
+}
+#endif // SSE2
 
 template <typename Db> class basic_inode_impl : public art_node_base<typename Db::bitwise_key>
 {
@@ -428,14 +445,10 @@ public:
     [[nodiscard, gnu::pure]] const_iterator find_child(std::uint8_t key_byte) noexcept
     {
 #if defined(__SSE2__)
-        const auto replicated_search_key = _mm_set1_epi8(static_cast<char>(key_byte));
-        const auto keys_in_sse_reg = _mm_cvtsi32_si128(static_cast<std::int32_t>(keys.integer));
-        const auto matching_key_positions = _mm_cmpeq_epi8(replicated_search_key, keys_in_sse_reg);
-        const auto mask = (1U << this->children_count) - 1;
-        const auto bit_field =
-            static_cast<unsigned>(_mm_movemask_epi8(matching_key_positions)) & mask;
+        const unsigned int bit_field = cmpeq_key_mask(
+            _mm_set1_epi8(key_byte), _mm_cvtsi32_si128(keys.integer), this->children_count);
         if (bit_field != 0) {
-            const auto i = static_cast<unsigned>(__builtin_ctz(bit_field));
+            const unsigned int i = tzcnt(bit_field);
             return const_iterator(children[i], i, this->tagged_self());
         }
 #else  // No SSE
@@ -498,13 +511,8 @@ private:
         std::uint8_t key_byte) const noexcept
     {
 #if defined(__SSE2__)
-        const auto replicated_insert_key = _mm_set1_epi8(key_byte);
-        const auto keys_in_sse_reg = _mm_cvtsi32_si128(static_cast<std::int32_t>(keys.integer));
-        const auto lesser_keys = _mm_cmple_epu8(replicated_insert_key, keys_in_sse_reg);
-        // Put a sentry bit here, so that we know that lo_mask is never 0
-        const std::uint64_t lo_mask = (static_cast<std::uint64_t>(1) << 32) |
-                                      static_cast<std::uint64_t>(_mm_cvtsi128_si32(lesser_keys));
-        return __builtin_ctzl(lo_mask) >> 3;
+        return cmple_key_position(_mm_cvtsi32_si128(keys.integer), _mm_set1_epi8(key_byte),
+                                  this->children_count);
 #else // No SSE2
         const auto first_lt = ((keys.integer & 0xFFU) < key_byte) ? 1 : 0;
         const auto second_lt = (((keys.integer >> 8U) & 0xFFU) < key_byte) ? 1 : 0;
@@ -678,13 +686,10 @@ public:
     [[nodiscard, gnu::pure]] constexpr const_iterator find_child(std::uint8_t key_byte) noexcept
     {
 #if defined(__SSE2__)
-        const auto replicated_search_key = _mm_set1_epi8(static_cast<char>(key_byte));
-        const auto matching_key_positions = _mm_cmpeq_epi8(replicated_search_key, keys.sse);
-        const auto mask = (1U << this->children_count) - 1;
-        const auto bit_field =
-            static_cast<unsigned>(_mm_movemask_epi8(matching_key_positions)) & mask;
+        const unsigned int bit_field =
+            cmpeq_key_mask(_mm_set1_epi8(key_byte), keys.sse, this->children_count);
         if (bit_field != 0) {
-            const auto i = static_cast<unsigned>(__builtin_ctz(bit_field));
+            const unsigned int i = tzcnt(bit_field);
             return const_iterator(children[i], i, this->tagged_self());
         }
 #else
@@ -740,12 +745,8 @@ private:
                keys.byte_array.cbegin() + children_count);
 
 #if defined(__SSE2__)
-        const auto replicated_insert_key = _mm_set1_epi8(static_cast<char>(key_byte));
-        const auto lesser_key_positions = _mm_cmple_epu8(replicated_insert_key, keys.sse);
-        const auto mask = (1U << children_count) - 1;
-        const auto bit_field =
-            static_cast<unsigned>(_mm_movemask_epi8(lesser_key_positions)) & mask;
-        const std::uint8_t result = (bit_field != 0) ? __builtin_ctz(bit_field) : children_count;
+        const uint8_t result =
+            cmple_key_position(keys.sse, _mm_set1_epi8(key_byte), children_count);
 #else
         const std::uint8_t result =
             std::lower_bound(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count,
@@ -877,9 +878,9 @@ public:
             const auto vec01_cmp = _mm_packs_epi32(vec0_cmp, vec1_cmp);
             const auto vec23_cmp = _mm_packs_epi32(vec2_cmp, vec3_cmp);
             const auto vec_cmp = _mm_packs_epi32(vec01_cmp, vec23_cmp);
-            const auto cmp_mask = static_cast<std::uint64_t>(_mm_movemask_epi8(vec_cmp));
+            const unsigned int cmp_mask = _mm_movemask_epi8(vec_cmp);
             if (cmp_mask != 0) {
-                i = (i << 1U) + (ffs_nonzero(cmp_mask) >> 1U);
+                i = (i << 1u) + ((tzcnt(cmp_mask) + 1u) >> 1u);
                 break;
             }
             i += 4;

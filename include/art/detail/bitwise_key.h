@@ -1,7 +1,7 @@
 #ifndef ART_DETAIL_BITWISE_KEY_HEADER_INCLUDED
 #define ART_DETAIL_BITWISE_KEY_HEADER_INCLUDED
 
-#include "ffs_nonzero.h"
+#include "tzcnt.h"
 
 #include <boost/endian/conversion.hpp>
 #include <boost/integer.hpp>
@@ -183,7 +183,7 @@ template <typename Compare> struct unsigned_integral_bitwise_key {
 
         const bitkey_type diff = k1.key.bits ^ k2.key.bits;
         const bitkey_type clamped = diff | himask(clamp_byte_pos);
-        return (ffs_nonzero(clamped) - 1) >> 3U;
+        return tzcnt(clamped) >> 3U;
     }
 
     [[nodiscard]] static unsigned_integral_bitwise_key partial_key(unsigned_integral_bitwise_key k,
