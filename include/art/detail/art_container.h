@@ -156,7 +156,7 @@ public:
     const_iterator upper_bound(fast_key_type key) const;
 
     // Since C++20
-    bool contains(fast_key_type key) const noexcept { return internal_locate(key).match(key); }
+    bool contains(fast_key_type key) const noexcept;
 
     std::pair<iterator, iterator> equal_range(fast_key_type key)
     {
@@ -248,7 +248,7 @@ protected:
     template <typename... Args>
     [[nodiscard]] auto emplace_key_args(fast_key_type key, Args&&... args)
     {
-        return emplace_key_args(multi_container(), key, std::forward<Args>(args)...);
+        return emplace_key_args(multi_container(), bitwise_key(key), std::forward<Args>(args)...);
     }
 
     template <typename... Args>
@@ -258,31 +258,30 @@ private:
     using key_size_type = typename bitwise_key::size_type;
     using bitwise_key_prefix = std::pair<bitwise_key, key_size_type>;
 
-    [[nodiscard]] static constexpr bitwise_key_prefix make_bitwise_key_prefix(
-        fast_key_type key) noexcept
+    [[nodiscard]] const_iterator internal_locate(bitwise_key_prefix& key) const noexcept;
+    [[nodiscard]] const_iterator internal_locate(bitwise_key_prefix&& key) const noexcept
     {
-        bitwise_key bitk(key);
-        return std::make_pair(bitk, bitk.max_size());
+        return internal_locate(key);
     }
 
-    [[nodiscard]] const_iterator internal_locate(bitwise_key_prefix& key) const noexcept;
-    [[nodiscard]] const_iterator internal_locate(fast_key_type key) const noexcept;
     [[nodiscard]] const_iterator internal_find(fast_key_type key) const noexcept;
 
     template <typename... Args>
-    [[nodiscard]] iterator internal_emplace(const_iterator hint, fast_key_type original_key,
+    [[nodiscard]] iterator internal_emplace(iterator hint, bitwise_key bitk,
                                             const bitwise_key_prefix& key, Args&&... args);
 
     template <typename... Args>
-    [[nodiscard]] iterator emplace_key_args(std::true_type, fast_key_type key, Args&&... args);
+    [[nodiscard]] iterator emplace_key_args(std::true_type, bitwise_key key, Args&&... args);
 
     template <typename... Args>
-    [[nodiscard]] std::pair<iterator, bool> emplace_key_args(std::false_type, fast_key_type key,
+    [[nodiscard]] std::pair<iterator, bool> emplace_key_args(std::false_type, bitwise_key key,
                                                              Args&&... args);
 
     iterator internal_erase(iterator pos);
 
 private:
+    using db_allocator_traits = std::allocator_traits<allocator_type>;
+
     [[nodiscard]] allocator_type& allocator() noexcept
     {
         return *static_cast<allocator_type*>(&tree);
@@ -308,7 +307,7 @@ private:
 
     // Leaf creation/deallocation
     template <typename... Args>
-    [[nodiscard]] leaf_unique_ptr make_leaf_ptr(fast_key_type key, Args&&... args);
+    [[nodiscard]] leaf_unique_ptr make_leaf_ptr(bitwise_key key, Args&&... args);
 
     template <typename Node> void deallocate_node(Node* node) noexcept;
     void deallocate(inode_4* node) noexcept { deallocate_node(node); }
@@ -321,14 +320,14 @@ private:
     template <typename Node>
     void deallocate_subtree(Node* node) noexcept(std::is_nothrow_destructible<mapped_type>::value);
 
-    void assign_to_parent(const_iterator hint, node_ptr child) noexcept;
+    void assign_to_parent(iterator hint, node_ptr child) noexcept;
 
     template <typename INode, typename NodePtr, typename SizeType>
-    iterator create_inode(const_iterator hint, bitwise_key prefix, NodePtr pdst,
-                          leaf_unique_ptr leaf, SizeType key);
+    iterator create_inode(iterator hint, bitwise_key prefix, NodePtr pdst, leaf_unique_ptr leaf,
+                          SizeType key);
 
     template <typename Source>
-    iterator grow_node(const_iterator hint, node_ptr dest_node, leaf_unique_ptr leaf,
+    iterator grow_node(iterator hint, node_ptr dest_node, leaf_unique_ptr leaf,
                        std::uint8_t key_byte);
 
     // Functions to convert a node to a smaller type of node. This allows to fully

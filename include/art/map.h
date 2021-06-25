@@ -3,7 +3,6 @@
 
 #include "detail/art_container.h"
 #include "detail/container_traits.h"
-#include "detail/fast_const_argument.h"
 
 namespace art
 {

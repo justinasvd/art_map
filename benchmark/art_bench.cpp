@@ -89,6 +89,21 @@ template <typename C> inline void insert(benchmark::State& state)
     }
 }
 
+template <typename C> void contains(benchmark::State& state)
+{
+    C container;
+    const auto values = fill_container(container);
+
+    auto it = values.begin();
+    for (auto _ : state) {
+        bool r = container.contains(test::key_of_value(*it));
+        assert(r);
+        do_not_optimize(r);
+        if (++it == values.end())
+            it = values.begin();
+    }
+}
+
 // Benchmark lookup of values in a container.
 template <typename C> void find(benchmark::State& state)
 {
@@ -182,8 +197,16 @@ template <typename C> inline void erase_sequential(benchmark::State& state)
     BENCHMARK_TEMPLATE(TestName, art::multi##__VA_ARGS__)                                          \
     /**/
 
+// C++20 specific benchmarks
+#if __cplusplus > 201703L
+#define GENERATE_BENCH_SET_CPP20(TestName, ...) GENERATE_BENCH_SET(TestName, __VA_ARGS__)
+#else
+#define GENERATE_BENCH_SET_CPP20(TestName, ...) /* No benchmark */
+#endif
+
 #define GENERATE_BENCHMARKS(...)                                                                   \
     GENERATE_BENCH_SET(fwditer, __VA_ARGS__);                                                      \
+    GENERATE_BENCH_SET_CPP20(contains, __VA_ARGS__);                                               \
     GENERATE_BENCH_SET(find, __VA_ARGS__);                                                         \
     GENERATE_BENCH_SET(find_sorted, __VA_ARGS__);                                                  \
     GENERATE_BENCH_SET(insert, __VA_ARGS__);                                                       \

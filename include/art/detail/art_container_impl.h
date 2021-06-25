@@ -49,19 +49,24 @@ inline typename db<P>::const_iterator db<P>::internal_locate(bitwise_key_prefix&
     return pos;
 }
 
-// Avoids keeping bitwise key temporary
-template <typename P>
-inline typename db<P>::const_iterator db<P>::internal_locate(fast_key_type key) const noexcept
+template <typename BitwiseKey>
+[[nodiscard]] inline constexpr auto make_key_prefix(BitwiseKey key) noexcept
 {
-    auto bitk = make_bitwise_key_prefix(key);
-    return internal_locate(bitk);
+    return std::make_pair(key, key.max_size());
 }
 
 template <typename P>
 inline typename db<P>::const_iterator db<P>::internal_find(fast_key_type key) const noexcept
 {
-    auto pos = internal_locate(key);
-    return pos.match(key) ? pos : end();
+    const bitwise_key bitk(key);
+    auto pos = internal_locate(make_key_prefix(bitk));
+    return pos.match(bitk) ? pos : end();
+}
+
+template <typename P> inline bool db<P>::contains(fast_key_type key) const noexcept
+{
+    const bitwise_key bitk(key);
+    return internal_locate(make_key_prefix(bitk)).match(bitk);
 }
 
 template <typename P>
@@ -70,7 +75,7 @@ inline unique_node_ptr<Node, db<P>> db<P>::make_node_ptr(Args&&... args)
 {
     using unique_ptr_t = unique_node_ptr<Node, db<P>>;
 
-    using node_allocator_type = typename P::allocator_type::template rebind<Node>::other;
+    using node_allocator_type = typename db_allocator_traits::rebind_alloc<Node>;
     using node_allocator_traits = std::allocator_traits<node_allocator_type>;
 
     node_allocator_type alloc(allocator());
@@ -86,7 +91,7 @@ inline unique_node_ptr<Node, db<P>> db<P>::make_node_ptr(Args&&... args)
 
 template <typename P>
 template <typename... Args>
-inline typename db<P>::leaf_unique_ptr db<P>::make_leaf_ptr(fast_key_type key, Args&&... args)
+inline typename db<P>::leaf_unique_ptr db<P>::make_leaf_ptr(bitwise_key key, Args&&... args)
 {
     // Allocate a single leaf
     auto leaf = make_node_ptr<leaf_type>(key);
@@ -99,7 +104,7 @@ template <typename P>
 template <typename Node>
 inline void db<P>::deallocate_node(Node* node) noexcept
 {
-    using node_allocator_type = typename P::allocator_type::template rebind<Node>::other;
+    using node_allocator_type = typename db_allocator_traits::rebind_alloc<Node>;
     using node_allocator_traits = std::allocator_traits<node_allocator_type>;
 
     assert(count<Node>() != 0);
@@ -153,8 +158,7 @@ inline void db<P>::deallocate(node_ptr node) noexcept(
     }
 }
 
-template <typename P>
-inline void db<P>::assign_to_parent(const_iterator hint, node_ptr child) noexcept
+template <typename P> inline void db<P>::assign_to_parent(iterator hint, node_ptr child) noexcept
 {
     if (BOOST_LIKELY(hint.parent() != nullptr)) {
         const auto parent = hint.parent();
@@ -182,9 +186,8 @@ inline void db<P>::assign_to_parent(const_iterator hint, node_ptr child) noexcep
 
 template <typename P>
 template <typename INode, typename NodePtr, typename SizeType>
-inline typename db<P>::iterator db<P>::create_inode(const_iterator hint, bitwise_key prefix,
-                                                    NodePtr pdst, leaf_unique_ptr leaf,
-                                                    SizeType key)
+inline typename db<P>::iterator db<P>::create_inode(iterator hint, bitwise_key prefix, NodePtr pdst,
+                                                    leaf_unique_ptr leaf, SizeType key)
 {
     auto inode = make_node_ptr<INode>(prefix);
     const iterator leaf_iter = inode->populate(std::move(pdst), std::move(leaf), key);
@@ -195,7 +198,7 @@ inline typename db<P>::iterator db<P>::create_inode(const_iterator hint, bitwise
 
 template <typename P>
 template <typename Source>
-inline typename db<P>::iterator db<P>::grow_node(const_iterator hint, node_ptr dest_node,
+inline typename db<P>::iterator db<P>::grow_node(iterator hint, node_ptr dest_node,
                                                  leaf_unique_ptr leaf, std::uint8_t key_byte)
 {
     using larger_inode = typename Source::larger_inode_type;
@@ -214,15 +217,14 @@ inline typename db<P>::iterator db<P>::grow_node(const_iterator hint, node_ptr d
 
 template <typename P>
 template <typename... Args>
-inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
-                                                        fast_key_type original_key,
+inline typename db<P>::iterator db<P>::internal_emplace(iterator hint, bitwise_key bitk,
                                                         const bitwise_key_prefix& key,
                                                         Args&&... args)
 {
-    assert(key.first.max_size() >= key.second);
+    assert(bitk.max_size() >= key.second);
 
     // Preemptively create a leaf. This also ensures strong exception safety
-    auto leaf_ptr = make_leaf_ptr(original_key, std::forward<Args>(args)...);
+    auto leaf_ptr = make_leaf_ptr(bitk, std::forward<Args>(args)...);
 
     if (BOOST_UNLIKELY(empty())) {
         assert(!hint.node());
@@ -241,12 +243,12 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
         bitwise_key prefix = pdst->prefix();
 
         // Can only happen in multivalued container case
-        if (BOOST_UNLIKELY(prefix == leaf_ptr->prefix())) {
+        if (BOOST_UNLIKELY(prefix == bitk)) {
             pdst->push_back(std::move(leaf_ptr->value()));
             return iterator(hint);
         }
 
-        const key_size_type depth = key.first.max_size() - key.second;
+        const key_size_type depth = bitk.max_size() - key.second;
 
         // Put the 2 leaves under the single inode_4
         prefix.shift_right(depth);
@@ -293,13 +295,13 @@ inline typename db<P>::iterator db<P>::internal_emplace(const_iterator hint,
 
 template <typename P>
 template <typename... Args>
-inline typename db<P>::iterator db<P>::emplace_key_args(std::true_type, fast_key_type key,
+inline typename db<P>::iterator db<P>::emplace_key_args(std::true_type, bitwise_key key,
                                                         Args&&... args)
 {
     // Emplacement support for multiset/multimap
-    auto bitk = make_bitwise_key_prefix(key);
-    auto pos = internal_locate(bitk);
-    return internal_emplace(pos, key, bitk, std::forward<Args>(args)...);
+    auto prefix = make_key_prefix(key);
+    auto pos = iterator(internal_locate(prefix));
+    return internal_emplace(pos, key, prefix, std::forward<Args>(args)...);
 }
 
 // Inserts a value into the tree only if it does not already exist. The
@@ -307,18 +309,17 @@ inline typename db<P>::iterator db<P>::emplace_key_args(std::true_type, fast_key
 template <typename P>
 template <typename... Args>
 inline std::pair<typename db<P>::iterator, bool> db<P>::emplace_key_args(std::false_type,
-                                                                         fast_key_type key,
+                                                                         bitwise_key key,
                                                                          Args&&... args)
 {
     // Emplacement support for set/map
-    auto bitk = make_bitwise_key_prefix(key);
-    auto pos = internal_locate(bitk);
+    auto prefix = make_key_prefix(key);
+    auto pos = iterator(internal_locate(prefix));
 
     const bool should_insert = !pos.match(key);
-    return std::make_pair(should_insert
-                              ? internal_emplace(pos, key, bitk, std::forward<Args>(args)...)
-                              : iterator(pos),
-                          should_insert);
+    return std::make_pair(
+        should_insert ? internal_emplace(pos, key, prefix, std::forward<Args>(args)...) : pos,
+        should_insert);
 }
 
 template <typename Iterator>
@@ -414,16 +415,18 @@ template <typename P> inline typename db<P>::iterator db<P>::internal_erase(iter
 template <typename P>
 inline typename db<P>::size_type db<P>::count(fast_key_type key) const noexcept
 {
-    auto pos = internal_locate(key);
-    return pos.match(key) ? pos.leaf()->size() : static_cast<size_type>(0);
+    const bitwise_key bitk(key);
+    auto pos = internal_locate(make_key_prefix(bitk));
+    return pos.match(bitk) ? pos.leaf()->size() : static_cast<size_type>(0);
 }
 
 template <typename P> inline typename db<P>::size_type db<P>::erase(fast_key_type key)
 {
-    auto pos = internal_locate(key);
+    const bitwise_key bitk(key);
+    auto pos = internal_locate(make_key_prefix(bitk));
 
     size_type removed = 0;
-    if (pos.match(key)) {
+    if (pos.match(bitk)) {
         removed = pos.leaf()->size();
         internal_erase(iterator(pos));
     }

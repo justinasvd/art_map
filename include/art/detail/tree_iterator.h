@@ -133,9 +133,9 @@ private:
         return node && node.tag() == node_type::LEAF;
     }
     [[nodiscard]] bool is_leaf() const noexcept { return is_leaf(node_); }
-    [[nodiscard]] bool match(fast_key_type key) const noexcept
+    [[nodiscard]] bool match(bitwise_key key) const noexcept
     {
-        return is_leaf() && node_->prefix() == bitwise_key(key);
+        return is_leaf() && node_->prefix() == key;
     }
 
     [[nodiscard]] typename Traits::node_base* node_base() const noexcept { return node_.get(); }

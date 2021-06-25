@@ -81,6 +81,7 @@ public:
     using node_ptr = typename Db::node_ptr;
 
     using leaf_unique_ptr = unique_node_ptr<leaf_type, Db>;
+    using iterator = typename Db::iterator;
     using const_iterator = typename Db::const_iterator;
 
 public:
@@ -172,9 +173,9 @@ public:
     [[nodiscard]] node_ptr parent() const noexcept { return parent_; }
     [[nodiscard]] std::uint8_t index() const noexcept { return position; }
 
-    [[nodiscard]] const_iterator self_iterator(node_type tag) noexcept
+    [[nodiscard]] iterator self_iterator(node_type tag) noexcept
     {
-        return const_iterator(node_ptr(this, tag), position, parent_);
+        return iterator(node_ptr(this, tag), position, parent_);
     }
 
 protected:
@@ -238,7 +239,7 @@ public:
     using smaller_inode_type = SmallerDerived;
     using larger_inode_type = LargerDerived;
 
-    using const_iterator = typename parent_type::const_iterator;
+    using iterator = typename Db::iterator;
 
     static constexpr unsigned min_size = MinSize;
     static constexpr unsigned capacity = Capacity;
@@ -261,9 +262,9 @@ public:
     [[nodiscard]] static constexpr node_type static_type() noexcept { return NodeType; }
 
     [[nodiscard]] node_ptr tagged_self() noexcept { return node_ptr(this, NodeType); }
-    [[nodiscard]] const_iterator self_iterator() noexcept
+    [[nodiscard]] iterator self_iterator() noexcept
     {
-        return const_iterator(tagged_self(), this->position, this->parent_);
+        return iterator(tagged_self(), this->position, this->parent_);
     }
 
 protected:
@@ -478,7 +479,7 @@ public:
                    : const_iterator{};
     }
 
-    constexpr void replace(const_iterator pos, node_ptr child) noexcept
+    constexpr void replace(iterator pos, node_ptr child) noexcept
     {
         const std::uint8_t child_index = pos.index();
         assert(pos.parent() == this->tagged_self() && pos.node() == children[child_index]);
@@ -705,7 +706,7 @@ public:
                    : const_iterator{};
     }
 
-    constexpr void replace(const_iterator pos, node_ptr child) noexcept
+    constexpr void replace(iterator pos, node_ptr child) noexcept
     {
         const std::uint8_t child_index = pos.index();
         assert(pos.parent() == this->tagged_self() && pos.node() == children[child_index]);
@@ -929,7 +930,7 @@ public:
         return const_iterator{};
     }
 
-    constexpr void replace(const_iterator pos, node_ptr child) noexcept
+    constexpr void replace(iterator pos, node_ptr child) noexcept
     {
         assert(pos.parent() == this->tagged_self());
         const auto child_i = child_indices[pos.index()];
@@ -1069,7 +1070,7 @@ public:
                    : const_iterator{};
     }
 
-    constexpr void replace(const_iterator pos, node_ptr child) noexcept
+    constexpr void replace(iterator pos, node_ptr child) noexcept
     {
         const std::uint8_t key_byte = pos.index();
         assert(pos.parent() == this->tagged_self() && pos.node() == children[key_byte]);
