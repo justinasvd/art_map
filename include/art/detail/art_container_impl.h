@@ -70,6 +70,63 @@ template <typename P> inline bool db<P>::contains(fast_key_type key) const noexc
 }
 
 template <typename P>
+template <typename Filter>
+inline typename db<P>::const_iterator db<P>::internal_bound(bitwise_key original_key,
+                                                            Filter filter) const noexcept
+{
+    // By ensuring that the leaf tag is always 0, we can simplify inode filtering
+    // because nullptr pointers would serendipitously have 0 tags too
+    static_assert(static_cast<unsigned>(node_type::LEAF) == 0, "Leaf tag must be 0");
+
+    const_iterator pos(tree.root);
+
+    auto key = make_key_prefix(original_key);
+
+    while (pos.tag() != node_type::LEAF) {
+        const inode* nb = pos.inode();
+        const key_size_type prefix_length = nb->prefix_length();
+        if (prefix_length &&
+            (key.second <= prefix_length || nb->shared_prefix_length(key.first) < prefix_length)) {
+            return pos.parent() != nullptr ? pos.forward_step() : end();
+        }
+
+        const std::uint8_t key_byte = key.first[prefix_length];
+        const auto p = inode::lower_bound(pos.node(), key_byte);
+        if (!p.first.node()) {
+            return pos.parent() != nullptr ? pos.forward_step() : end();
+        }
+        if (p.second > key_byte && p.first.tag() != node_type::LEAF) {
+            return inode::leftmost_leaf(p.first.node());
+        }
+        pos = p.first;
+
+        // Consume the explored prefix + 1 byte used during child lookup
+        shift_right(key, prefix_length + 1);
+    }
+
+    // Verify that the leaf we found is correctly bounded
+    if (pos.node() != nullptr && filter(pos.leaf()->prefix().unpack())) {
+        return pos.parent() != nullptr ? pos.forward_step() : end();
+    }
+
+    return pos;
+}
+
+template <typename P>
+inline typename db<P>::const_iterator db<P>::internal_lower_bound(fast_key_type key) const noexcept
+{
+    return internal_bound(bitwise_key(key),
+                          [key, comp{key_comp()}](fast_key_type leaf) { return comp(leaf, key); });
+}
+
+template <typename P>
+inline typename db<P>::const_iterator db<P>::internal_upper_bound(fast_key_type key) const noexcept
+{
+    return internal_bound(bitwise_key(key),
+                          [key, comp{key_comp()}](fast_key_type leaf) { return !comp(key, leaf); });
+}
+
+template <typename P>
 template <typename Node, typename... Args>
 inline unique_node_ptr<Node, db<P>> db<P>::make_node_ptr(Args&&... args)
 {

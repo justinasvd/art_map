@@ -41,13 +41,19 @@ namespace detail
 #define ART_DETAIL_CANNOT_HAPPEN() cannot_happen(__FILE__, __LINE__, __func__)
 
 #if defined(__SSE2__)
+namespace sse2
+{
 // Idea from https://stackoverflow.com/a/32945715/80458
-inline __m128i _mm_cmple_epu8(__m128i x, __m128i y) noexcept
+inline __m128i less_or_equal_epu8(__m128i x, __m128i y) noexcept
+{
+    return _mm_cmpeq_epi8(_mm_min_epu8(y, x), y);
+}
+inline __m128i greater_or_equal_epu8(__m128i x, __m128i y) noexcept
 {
     return _mm_cmpeq_epi8(_mm_max_epu8(y, x), y);
 }
 
-inline unsigned int clamped_pos(__m128i x, unsigned int clamp) noexcept
+inline unsigned int clamped_pos(__m128i x, std::uint8_t clamp) noexcept
 {
     // This is not as inefficient as it seems. If sufficiently advanced instruction
     // set is used by the compiler, then the result of _mm_movemask_epi8 will be
@@ -55,14 +61,20 @@ inline unsigned int clamped_pos(__m128i x, unsigned int clamp) noexcept
     return static_cast<unsigned int>(_mm_movemask_epi8(x)) & ((1u << clamp) - 1u);
 }
 
-inline unsigned int cmpeq_key_mask(__m128i x, __m128i y, unsigned int clamp) noexcept
+inline unsigned int key_equal_mask(__m128i x, std::uint8_t y, std::uint8_t clamp) noexcept
 {
-    return clamped_pos(_mm_cmpeq_epi8(x, y), clamp);
+    return clamped_pos(_mm_cmpeq_epi8(x, _mm_set1_epi8(y)), clamp);
 }
-inline unsigned int cmple_key_position(__m128i x, __m128i y, unsigned int clamp) noexcept
+inline unsigned int key_upper_bound(__m128i x, std::uint8_t y, std::uint8_t clamp) noexcept
 {
-    return _mm_popcnt_u32(clamped_pos(_mm_cmple_epu8(x, y), clamp));
+    return _mm_popcnt_u32(clamped_pos(greater_or_equal_epu8(x, _mm_set1_epi8(y)), clamp));
 }
+inline unsigned int key_lower_bound(__m128i x, std::uint8_t y) noexcept
+{
+    return tzcnt(_mm_movemask_epi8(less_or_equal_epu8(x, _mm_set1_epi8(y))));
+}
+
+} // namespace sse2
 #endif // SSE2
 
 template <typename Db> class basic_inode_impl : public art_node_base<typename Db::bitwise_key>
@@ -112,6 +124,13 @@ public:
                                                              std::uint8_t key_byte) noexcept
     {
         return dispatch_inode(node, [key_byte](auto& inode) { return inode.find_child(key_byte); });
+    }
+
+    [[nodiscard]] static constexpr std::pair<const_iterator, std::uint8_t> lower_bound(
+        node_ptr node, std::uint8_t key_byte) noexcept
+    {
+        return dispatch_inode(node,
+                              [key_byte](auto& inode) { return inode.lower_bound(key_byte); });
     }
 
     [[nodiscard]] static constexpr const_iterator leftmost_child(node_ptr node,
@@ -301,6 +320,18 @@ public:
 
 static constexpr std::uint8_t empty_child = 0xFF;
 
+template <std::size_t N>
+inline void assign_empty_child(std::array<std::uint8_t, N>& bytes, std::uint8_t pos) noexcept
+{
+    // GCC 10+ incorrectly reports that we are writing 1 byte into a region of size 0
+    // It is unclear how to properly appease the compiler in this scenario, so we simply
+    // disable the warning around the "offending" statement
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+    bytes[pos] = empty_child;
+#pragma GCC diagnostic pop
+}
+
 template <typename Db>
 using basic_inode_4_parent =
     basic_inode<Db, 2, 4, node_type::I4, fake_inode, basic_inode_16<Db>, basic_inode_4<Db>>;
@@ -380,7 +411,7 @@ public:
 
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
 
-        const unsigned insert_pos_index = get_sorted_key_array_insert_position(key_byte);
+        const unsigned insert_pos_index = key_upper_bound(key_byte);
 
         for (typename decltype(keys.byte_array)::size_type i = children_count; i > insert_pos_index;
              --i) {
@@ -418,7 +449,7 @@ public:
         }
 
         --children_count;
-        keys.byte_array[children_count] = empty_child;
+        assign_empty_child(keys.byte_array, children_count);
         this->children_count = children_count;
 
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
@@ -444,8 +475,8 @@ public:
     [[nodiscard, gnu::pure]] const_iterator find_child(std::uint8_t key_byte) noexcept
     {
 #if defined(__SSE2__)
-        const unsigned int bit_field = cmpeq_key_mask(
-            _mm_set1_epi8(key_byte), _mm_cvtsi32_si128(keys.integer), this->children_count);
+        const unsigned int bit_field =
+            sse2::key_equal_mask(_mm_cvtsi32_si128(keys.integer), key_byte, this->children_count);
         if (bit_field != 0) {
             const unsigned int i = tzcnt(bit_field);
             return const_iterator(children[i], i, this->tagged_self());
@@ -477,6 +508,15 @@ public:
                    : const_iterator{};
     }
 
+    [[nodiscard]] constexpr std::pair<const_iterator, std::uint8_t> lower_bound(
+        std::uint8_t key_byte) noexcept
+    {
+        const unsigned int insert_pos_index =
+            sse2::key_lower_bound(_mm_cvtsi32_si128(keys.integer), key_byte);
+        auto pos = leftmost_child(insert_pos_index);
+        return std::make_pair(pos, keys.byte_array[insert_pos_index % basic_inode_4::capacity]);
+    }
+
     constexpr void replace(iterator pos, node_ptr child) noexcept
     {
         const std::uint8_t child_index = pos.index();
@@ -506,12 +546,12 @@ public:
     }
 
 private:
-    [[nodiscard, gnu::pure]] constexpr unsigned get_sorted_key_array_insert_position(
+    [[nodiscard, gnu::pure]] constexpr unsigned key_upper_bound(
         std::uint8_t key_byte) const noexcept
     {
 #if defined(__SSE2__)
-        return cmple_key_position(_mm_cvtsi32_si128(keys.integer), _mm_set1_epi8(key_byte),
-                                  this->children_count);
+        return sse2::key_upper_bound(_mm_cvtsi32_si128(keys.integer), key_byte,
+                                     this->children_count);
 #else // No SSE2
         const auto first_lt = ((keys.integer & 0xFFU) < key_byte) ? 1 : 0;
         const auto second_lt = (((keys.integer >> 8U) & 0xFFU) < key_byte) ? 1 : 0;
@@ -582,8 +622,7 @@ private:
         assert(source_node->is_full());
         assert(this->is_min_size());
 
-        const unsigned insert_pos_index =
-            source_node->get_sorted_key_array_insert_position(key_byte);
+        const unsigned insert_pos_index = source_node->key_upper_bound(key_byte);
 
         unsigned i = 0;
         for (; i < insert_pos_index; ++i) {
@@ -640,7 +679,7 @@ public:
     {
         auto children_count = this->children_count;
 
-        const auto insert_pos_index = get_sorted_key_array_insert_position(key_byte);
+        const auto insert_pos_index = key_upper_bound(key_byte);
         if (insert_pos_index != children_count) {
             assert(keys.byte_array[insert_pos_index] != key_byte);
             std::copy_backward(keys.byte_array.cbegin() + insert_pos_index,
@@ -686,7 +725,7 @@ public:
     {
 #if defined(__SSE2__)
         const unsigned int bit_field =
-            cmpeq_key_mask(_mm_set1_epi8(key_byte), keys.sse, this->children_count);
+            sse2::key_equal_mask(keys.sse, key_byte, this->children_count);
         if (bit_field != 0) {
             const unsigned int i = tzcnt(bit_field);
             return const_iterator(children[i], i, this->tagged_self());
@@ -702,6 +741,14 @@ public:
         return start < this->children_count
                    ? const_iterator(children[start], start, this->tagged_self())
                    : const_iterator{};
+    }
+
+    [[nodiscard, gnu::pure]] constexpr std::pair<const_iterator, std::uint8_t> lower_bound(
+        std::uint8_t key_byte) noexcept
+    {
+        const auto insert_pos_index = sse2::key_lower_bound(keys.sse, key_byte);
+        auto pos = leftmost_child(insert_pos_index);
+        return std::make_pair(pos, keys.byte_array[insert_pos_index % basic_inode_16::capacity]);
     }
 
     constexpr void replace(iterator pos, node_ptr child) noexcept
@@ -732,7 +779,7 @@ public:
     }
 
 private:
-    [[nodiscard, gnu::pure]] constexpr std::uint8_t get_sorted_key_array_insert_position(
+    [[nodiscard, gnu::pure]] constexpr std::uint8_t key_upper_bound(
         std::uint8_t key_byte) const noexcept
     {
         const auto children_count = this->children_count;
@@ -744,11 +791,10 @@ private:
                keys.byte_array.cbegin() + children_count);
 
 #if defined(__SSE2__)
-        const uint8_t result =
-            cmple_key_position(keys.sse, _mm_set1_epi8(key_byte), children_count);
+        const uint8_t result = sse2::key_upper_bound(keys.sse, key_byte, children_count);
 #else
         const std::uint8_t result =
-            std::lower_bound(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count,
+            std::upper_bound(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count,
                              key_byte) -
             keys.byte_array.cbegin();
 #endif
@@ -911,11 +957,18 @@ public:
                    : const_iterator{};
     }
 
+    [[nodiscard]] constexpr std::pair<const_iterator, std::uint8_t> lower_bound(
+        std::uint8_t key_byte) noexcept
+    {
+        auto pos = leftmost_child(key_byte);
+        return std::make_pair(pos, pos.index());
+    }
+
     constexpr void remove(std::uint8_t child_index) noexcept
     {
         verify_remove_preconditions(child_index);
         children.pointer_array[child_indices[child_index]] = nullptr;
-        child_indices[child_index] = empty_child;
+        assign_empty_child(child_indices, child_index);
         --this->children_count;
     }
 
@@ -1066,6 +1119,13 @@ public:
         return it != children.end()
                    ? const_iterator(*it, it - children.begin(), this->tagged_self())
                    : const_iterator{};
+    }
+
+    [[nodiscard]] constexpr std::pair<const_iterator, std::uint8_t> lower_bound(
+        std::uint8_t key_byte) noexcept
+    {
+        auto pos = leftmost_child(key_byte);
+        return std::make_pair(pos, pos.index());
     }
 
     constexpr void replace(iterator pos, node_ptr child) noexcept

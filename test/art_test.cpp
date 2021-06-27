@@ -1,42 +1,59 @@
 #include "art/map.h"
 
+#include "test_utils.hpp"
+
 #include <iostream>
+
+// The number of values to use for benchmarks
+static constexpr unsigned int max_values = 1000000;
+
+// Seed for the sample generators
+static constexpr unsigned int seed = 123456789;
+
+template <typename T> struct precomputed_dataset {
+    static const std::vector<T> values;
+    static std::vector<T> generate() { return test::generate_values<T, max_values>(seed); }
+};
+
+// Precompute static dataset for different value types
+template <typename T>
+const std::vector<T> precomputed_dataset<T>::values = precomputed_dataset<T>::generate();
+
+template <typename C> [[nodiscard]] inline auto bench_dataset()
+{
+    using value_type = test::remove_key_const_t<typename C::value_type>;
+    return precomputed_dataset<value_type>::values;
+}
+
+template <typename C> [[nodiscard]] inline auto fill_container(C& c)
+{
+    auto values = bench_dataset<C>();
+    c.insert(values.begin(), values.end());
+    return values;
+}
 
 int main()
 {
     using key_type = std::uint64_t;
     using value_type = std::uint64_t;
 
-    static constexpr key_type max_keys = 50000000;
-
     art::map<key_type, value_type, std::less<key_type>> db;
 
     std::cout << "Inserting...\n";
-    for (key_type i = 0; i < max_keys; ++i) {
-        const key_type key = 1818 + i;
-        const value_type value = 1 + i;
+    fill_container(db);
 
-        auto p = db.emplace(key, value);
-        assert(p.second);
-        assert(p.first->first == key && p.first->second == value);
-        p = db.insert(std::make_pair(key, value));
-        assert(!p.second);
-        assert(p.first->first == key && p.first->second == value);
-    }
-
-    auto p = db.emplace(std::numeric_limits<key_type>::max(), max_keys);
-    assert(p.second);
-    assert(db.size() == max_keys + 1);
     std::cout << "Inserted " << db.size() << " elements, on average "
               << (static_cast<double>(db.current_memory_use()) / db.size())
               << " bytes per element\n";
 
-    std::cout << "Erasing...\n";
+    /*std::cout << "Erasing...\n";
     for (key_type i = 4; i < max_keys; ++i) {
         std::size_t cnt = db.erase(1818 + i);
         assert(cnt == 1);
     }
-    db.erase(std::numeric_limits<key_type>::max());
+    // db.erase(std::numeric_limits<key_type>::max());
+
+    p = db.emplace(1825, max_keys);
 
     db.dump(std::cout);
 
@@ -46,6 +63,11 @@ int main()
     for (const auto& p : db) {
         std::cout << p.first << ": " << p.second << std::endl;
     }
+
+    auto it = db.lower_bound(1822);
+    std::cout << "Lower bound: " << it->first << ": " << it->second << std::endl;
+    it = db.upper_bound(1822);
+    std::cout << "Upper bound: " << it->first << ": " << it->second << std::endl;*/
 
     db.clear();
 

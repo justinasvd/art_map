@@ -190,6 +190,59 @@ template <typename C> inline void erase_sequential(benchmark::State& state)
     }
 }
 
+template <typename C> void lower_bound(benchmark::State& state)
+{
+    C container;
+    auto values = fill_container(container);
+
+    auto it = values.begin();
+    for (auto _ : state) {
+        auto r = container.lower_bound(test::key_of_value(*it) + 1);
+        do_not_optimize(&r);
+
+        if (++it == values.end())
+            it = values.begin();
+    }
+}
+
+template <typename C> void lower_bound_sorted(benchmark::State& state)
+{
+    C container;
+    auto values = fill_container(container);
+    std::sort(values.begin(), values.end());
+
+    auto it = values.begin();
+    for (auto _ : state) {
+        auto prev = it++;
+        if (it != values.end()) {
+            auto actual_key = test::key_of_value(*prev) + 1;
+            auto r = container.lower_bound(actual_key);
+            do_not_optimize(&r);
+            assert(test::key_of_value(*r) > test::key_of_value(*prev));
+            assert(test::key_of_value(*r) == test::key_of_value(*it));
+        } else {
+            it = values.begin();
+        }
+    }
+}
+
+template <typename C> void upper_bound(benchmark::State& state)
+{
+    C container;
+    auto values = fill_container(container);
+
+    auto it = values.begin();
+    for (auto _ : state) {
+        auto actual_key = test::key_of_value(*it);
+        auto r = container.upper_bound(actual_key);
+        do_not_optimize(&r);
+        assert(r == container.lower_bound(actual_key + 1));
+
+        if (++it == values.end())
+            it = values.begin();
+    }
+}
+
 #define GENERATE_BENCH_SET(TestName, ...)                                                          \
     BENCHMARK_TEMPLATE(TestName, std::__VA_ARGS__);                                                \
     BENCHMARK_TEMPLATE(TestName, art::__VA_ARGS__);                                                \
@@ -211,7 +264,10 @@ template <typename C> inline void erase_sequential(benchmark::State& state)
     GENERATE_BENCH_SET(find_sorted, __VA_ARGS__);                                                  \
     GENERATE_BENCH_SET(insert, __VA_ARGS__);                                                       \
     GENERATE_BENCH_SET(erase, __VA_ARGS__);                                                        \
-    GENERATE_BENCH_SET(erase_sequential, __VA_ARGS__)                                              \
+    GENERATE_BENCH_SET(erase_sequential, __VA_ARGS__);                                             \
+    GENERATE_BENCH_SET(lower_bound, __VA_ARGS__);                                                  \
+    GENERATE_BENCH_SET(lower_bound_sorted, __VA_ARGS__);                                           \
+    GENERATE_BENCH_SET(upper_bound, __VA_ARGS__)                                                   \
     /**/
 
 GENERATE_BENCHMARKS(set<int>);

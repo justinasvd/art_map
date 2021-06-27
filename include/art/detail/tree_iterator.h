@@ -154,6 +154,30 @@ private:
         return Traits::value_ref(l->prefix().unpack(), l->value());
     }
 
+    tree_iterator& forward_step() noexcept
+    {
+        assert(parent_.tag() != node_type::LEAF);
+
+        do {
+            // Parent node is not yet exhausted, try to find a leftmost leaf
+            // from the current position.
+            if (position < 255) {
+                auto leaf = INode::leftmost_leaf(parent_, position + 1);
+                if (leaf.node()) {
+                    assert(leaf.parent() != nullptr);
+                    *this = leaf;
+                    break;
+                }
+            }
+
+            // Parent node has been exhausted. Try going one level up
+            *this = static_cast<inode_type*>(parent_.get())->self_iterator(parent_.tag());
+            __builtin_prefetch(parent_.get());
+        } while (parent_ != nullptr);
+
+        return *this;
+    }
+
     void increment() noexcept
     {
         if (BOOST_UNLIKELY(!is_leaf())) {
@@ -169,23 +193,7 @@ private:
             return;
         }
 
-        assert(parent_.tag() != node_type::LEAF);
-
-        do {
-            // Parent node is not yet exhausted, try to find a leftmost leaf
-            // from the current position.
-            if (position < 255) {
-                auto leaf = INode::leftmost_leaf(parent_, position + 1);
-                if (leaf.node()) {
-                    assert(leaf.parent() != nullptr);
-                    *this = leaf;
-                    return;
-                }
-            }
-
-            // Parent node has been exhausted. Try going one level up
-            *this = static_cast<inode_type*>(parent_.get())->self_iterator(parent_.tag());
-        } while (parent_ != nullptr);
+        forward_step();
     }
 
     void decrement() noexcept

@@ -152,8 +152,11 @@ public:
         return internal_lower_bound(key);
     }
 
-    iterator upper_bound(fast_key_type key);
-    const_iterator upper_bound(fast_key_type key) const;
+    iterator upper_bound(fast_key_type key) noexcept { return iterator(internal_upper_bound(key)); }
+    const_iterator upper_bound(fast_key_type key) const noexcept
+    {
+        return internal_upper_bound(key);
+    }
 
     // Since C++20
     bool contains(fast_key_type key) const noexcept;
@@ -265,6 +268,11 @@ private:
     }
 
     [[nodiscard]] const_iterator internal_find(fast_key_type key) const noexcept;
+
+    template <typename Filter>
+    [[nodiscard]] const_iterator internal_bound(bitwise_key key, Filter filter) const noexcept;
+    [[nodiscard]] const_iterator internal_lower_bound(fast_key_type key) const noexcept;
+    [[nodiscard]] const_iterator internal_upper_bound(fast_key_type key) const noexcept;
 
     template <typename... Args>
     [[nodiscard]] iterator internal_emplace(iterator hint, bitwise_key bitk,
