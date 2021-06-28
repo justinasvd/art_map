@@ -95,8 +95,9 @@ inline typename db<P>::const_iterator db<P>::internal_bound(bitwise_key original
         if (!p.first.node()) {
             return pos.parent() != nullptr ? pos.forward_step() : end();
         }
-        if (p.second > key_byte && p.first.tag() != node_type::LEAF) {
-            return inode::leftmost_leaf(p.first.node());
+        if (p.second > key_byte) {
+            return p.first.tag() != node_type::LEAF ? inode::leftmost_leaf(p.first.node())
+                                                    : p.first;
         }
         pos = p.first;
 

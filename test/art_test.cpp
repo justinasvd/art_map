@@ -40,34 +40,31 @@ int main()
     art::map<key_type, value_type, std::less<key_type>> db;
 
     std::cout << "Inserting...\n";
-    fill_container(db);
+    auto values = fill_container(db);
 
     std::cout << "Inserted " << db.size() << " elements, on average "
               << (static_cast<double>(db.current_memory_use()) / db.size())
               << " bytes per element\n";
 
-    /*std::cout << "Erasing...\n";
-    for (key_type i = 4; i < max_keys; ++i) {
-        std::size_t cnt = db.erase(1818 + i);
+    std::cout << "Erasing...\n";
+    for (auto it = std::next(values.begin(), 4); it != values.end(); ++it) {
+        std::size_t cnt = db.erase(test::key_of_value(*it));
         assert(cnt == 1);
     }
-    // db.erase(std::numeric_limits<key_type>::max());
-
-    p = db.emplace(1825, max_keys);
 
     db.dump(std::cout);
 
     std::cout << "Size: " << db.size() << std::endl;
-    std::cout << "Iter. dist: " << std::distance(db.cbegin(), db.cend()) << std::endl;
+    // std::cout << "Iter. dist: " << std::distance(db.cbegin(), db.cend()) << std::endl;
 
-    for (const auto& p : db) {
-        std::cout << p.first << ": " << p.second << std::endl;
-    }
+    // for (const auto& p : db) {
+    //    std::cout << p.first << ": " << p.second << std::endl;
+    //}
 
-    auto it = db.lower_bound(1822);
+    auto it = db.lower_bound(52618 + 1);
     std::cout << "Lower bound: " << it->first << ": " << it->second << std::endl;
-    it = db.upper_bound(1822);
-    std::cout << "Upper bound: " << it->first << ": " << it->second << std::endl;*/
+    it = db.upper_bound(52618);
+    std::cout << "Upper bound: " << it->first << ": " << it->second << std::endl;
 
     db.clear();
 
