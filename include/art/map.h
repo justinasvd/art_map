@@ -74,7 +74,7 @@ public:
     }
 
     template <typename... Args>
-    iterator emplace_hint(const_iterator hint, fast_key_type key, Args&&... args)
+    iterator emplace_hint(iterator hint, fast_key_type key, Args&&... args)
     {
         return this->emplace_hint_key_args(hint, key, std::forward<Args>(args)...);
     }
@@ -86,7 +86,7 @@ public:
     }
 
     template <typename... Args>
-    iterator try_emplace(const_iterator hint, fast_key_type key, Args&&... args)
+    iterator try_emplace(iterator hint, fast_key_type key, Args&&... args)
     {
         return this->emplace_hint_key_args(hint, key, std::forward<Args>(args)...);
     }

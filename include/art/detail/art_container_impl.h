@@ -381,12 +381,13 @@ template <typename... Args>
 inline typename db<P>::iterator db<P>::emplace_hint_key_args(iterator hint, fast_key_type key,
                                                              Args&&... args)
 {
+    const bitwise_key bitk(key);
     // Fast path for insert(lower_bound())
-    if (hint.match(key)) {
+    if (hint.match(bitk)) {
         hint.leaf()->push_front(std::forward<Args>(args)...);
         return hint;
     }
-    return get_iterator(emplace_key_args(multi_container(), key, std::forward<Args>(args)...));
+    return get_iterator(emplace_key_args(multi_container(), bitk, std::forward<Args>(args)...));
 }
 
 template <typename P>
