@@ -166,7 +166,7 @@ private:
                 if (leaf.node()) {
                     assert(leaf.parent() != nullptr);
                     *this = leaf;
-                    break;
+                    return *this;
                 }
             }
 
@@ -174,6 +174,10 @@ private:
             *this = static_cast<inode_type*>(parent_.get())->self_iterator(parent_.tag());
             __builtin_prefetch(parent_.get());
         } while (parent_ != nullptr);
+
+        // Reset the final position if the node is not a leaf. This is done to ensure
+        // that the final forward_step result is a correct end() iterator
+        position = 0;
 
         return *this;
     }

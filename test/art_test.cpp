@@ -55,11 +55,11 @@ int main()
     db.dump(std::cout);
 
     std::cout << "Size: " << db.size() << std::endl;
-    // std::cout << "Iter. dist: " << std::distance(db.cbegin(), db.cend()) << std::endl;
+    std::cout << "Iter. dist: " << std::distance(db.cbegin(), db.cend()) << std::endl;
 
-    // for (const auto& p : db) {
-    //    std::cout << p.first << ": " << p.second << std::endl;
-    //}
+    for (const auto& p : db) {
+        std::cout << p.first << ": " << p.second << std::endl;
+    }
 
     auto it = db.lower_bound(52618 + 1);
     std::cout << "Lower bound: " << it->first << ": " << it->second << std::endl;
