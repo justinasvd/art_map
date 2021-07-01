@@ -43,7 +43,7 @@ struct direct final {
         return static_cast<tag_type>(uintptr(p) & tag_mask);
     }
 
-    static constexpr T* tag(const T* p, tag_type value)
+    [[nodiscard]] static constexpr T* tag(const T* p, tag_type value)
     {
         // Take care that the tag value does not step on pointer bits
         if (BOOST_UNLIKELY(ptr_mask & static_cast<std::uintptr_t>(value)))

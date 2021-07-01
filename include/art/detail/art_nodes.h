@@ -514,7 +514,7 @@ public:
         const unsigned int insert_pos_index =
             sse2::key_lower_bound(_mm_cvtsi32_si128(keys.integer), key_byte);
         auto pos = leftmost_child(insert_pos_index);
-        return std::make_pair(pos, keys.byte_array[insert_pos_index % basic_inode_4::capacity]);
+        return std::make_pair(pos, keys.byte_array[pos.index()]);
     }
 
     constexpr void replace(iterator pos, node_ptr child) noexcept
@@ -656,8 +656,7 @@ public:
             if (source_child_i != empty_child) {
                 if (child_to_delete != i) {
                     keys.byte_array[next_child] = static_cast<std::uint8_t>(i);
-                    const auto source_child_ptr =
-                        source_node.children.pointer_array[source_child_i];
+                    const auto source_child_ptr = source_node.children[source_child_i];
                     assert(source_child_ptr != nullptr);
                     children[next_child] = source_child_ptr;
                     this->reparent(children[next_child], next_child);
@@ -748,7 +747,7 @@ public:
     {
         const auto insert_pos_index = sse2::key_lower_bound(keys.sse, key_byte);
         auto pos = leftmost_child(insert_pos_index);
-        return std::make_pair(pos, keys.byte_array[insert_pos_index % basic_inode_16::capacity]);
+        return std::make_pair(pos, keys.byte_array[pos.index()]);
     }
 
     constexpr void replace(iterator pos, node_ptr child) noexcept
@@ -815,14 +814,85 @@ private:
     friend basic_inode_48<Db>;
 };
 
-template <typename C, typename T>
-inline constexpr typename C::iterator get_child_pos(C& c, std::uint8_t key_byte, T value) noexcept
+template <typename NodePtr, unsigned int Capacity> union children_array {
+    std::array<NodePtr, Capacity> pointer_array;
+
+    [[nodiscard]] static constexpr unsigned int size() noexcept { return Capacity; }
+
+    [[nodiscard]] NodePtr& operator[](unsigned int n) noexcept { return pointer_array[n]; }
+    [[nodiscard]] const NodePtr operator[](unsigned int n) const noexcept
+    {
+        return pointer_array[n];
+    }
+#if defined(__SSE4_2__)
+    // To support unrolling without remainder
+    static_assert(Capacity % 8 == 0, "children_array capacity must be divisible by 8, otherwise it "
+                                     "cannot support unrolling without a remainder");
+    // No std::array below because it would ignore the alignment attribute
+    // NOLINTNEXTLINE(modernize-avoid-c-arrays)
+    static_assert(2 * sizeof(NodePtr) == sizeof(__m128i),
+                  "Incompatible architecture, expected 64 bit pointers");
+    __m128i pointer_vector[Capacity / 2]; // NOLINT(runtime/arrays)
+#endif
+};
+
+template <typename NodePtr, unsigned int N, typename Predicate>
+[[nodiscard]] inline unsigned int find_first_eq(const children_array<NodePtr, N>& children,
+                                                unsigned int start, Predicate pred) noexcept
 {
-    // This weird return statement is here to suppress the unused value warning,
-    // when the given value is a constant expression and the lambda does not actually
-    // refer to it at all. Specific to older g++ versions, e.g., 7.3
-    return (void)value, std::find_if_not(std::next(c.begin(), key_byte), c.end(),
-                                         [value](typename C::value_type u) { return u == value; });
+#if defined(__SSE4_2__)
+    const unsigned int bucket_end = std::min(((start + 7) / 8) * 8, N);
+    for (; start != bucket_end; ++start) {
+        if (pred(children[start]))
+            return start;
+    }
+    constexpr unsigned int max_siz = N / 2;
+    const __m128i nullptr_vector = _mm_setzero_si128();
+    unsigned int i = start >> 1;
+    for (; i != max_siz; i += 4) {
+        const auto vec0_cmp = _mm_cmpeq_epi64(children.pointer_vector[i], nullptr_vector);
+        const auto vec1_cmp = _mm_cmpeq_epi64(children.pointer_vector[i + 1], nullptr_vector);
+        const auto vec2_cmp = _mm_cmpeq_epi64(children.pointer_vector[i + 2], nullptr_vector);
+        const auto vec3_cmp = _mm_cmpeq_epi64(children.pointer_vector[i + 3], nullptr_vector);
+        // OK to treat 64-bit comparison result as 32-bit vector: we need to find
+        // the first 0xFF only.
+        const auto vec01_cmp = _mm_packs_epi32(vec0_cmp, vec1_cmp);
+        const auto vec23_cmp = _mm_packs_epi32(vec2_cmp, vec3_cmp);
+        const auto vec_cmp = _mm_packs_epi16(vec01_cmp, vec23_cmp);
+        const unsigned int cmp_mask = pred(_mm_movemask_epi8(vec_cmp));
+        if (cmp_mask != 0) {
+            return (i << 1u) + ((tzcnt(cmp_mask) + 1u) >> 1u);
+        }
+    }
+    // No entries were found
+    start = N;
+#else // No SSE4.2 support
+    while (start < N && !pred(children[start]))
+        ++start;
+#endif
+    return start;
+}
+
+template <typename NodePtr, unsigned int N>
+[[nodiscard]] inline unsigned int find_first_null(const children_array<NodePtr, N>& children,
+                                                  unsigned int i) noexcept
+{
+    struct is_null_node {
+        unsigned int operator()(unsigned int x) const noexcept { return x; }
+        bool operator()(NodePtr ptr) const noexcept { return ptr == nullptr; }
+    };
+    return find_first_eq(children, i, is_null_node());
+}
+
+template <typename NodePtr, unsigned int N>
+[[nodiscard]] inline unsigned int find_first_non_null(const children_array<NodePtr, N>& children,
+                                                      unsigned int i) noexcept
+{
+    struct is_non_null_node {
+        unsigned int operator()(unsigned int x) const noexcept { return x ^ 0xFFFF; }
+        bool operator()(NodePtr ptr) const noexcept { return ptr != nullptr; }
+    };
+    return find_first_eq(children, i, is_non_null_node());
 }
 
 template <typename Db>
@@ -862,15 +932,14 @@ private:
         for (std::uint8_t i = 0; i != inode16_type::capacity; ++i) {
             const std::uint8_t existing_key_byte = source_node_ptr->keys.byte_array[i];
             child_indices[existing_key_byte] = i;
-            children.pointer_array[i] = source_node_ptr->children[i];
-            this->reparent(children.pointer_array[i], existing_key_byte);
+            children[i] = source_node_ptr->children[i];
+            this->reparent(children[i], existing_key_byte);
         }
 
         assert(child_indices[key_byte] == empty_child);
         child_indices[key_byte] = inode16_type::capacity;
-        children.pointer_array[inode16_type::capacity] = child.release();
-        iterator inserted(children.pointer_array[inode16_type::capacity], key_byte,
-                          this->tagged_self());
+        children[inode16_type::capacity] = child.release();
+        iterator inserted(children[inode16_type::capacity], key_byte, this->tagged_self());
 
         std::fill(std::next(children.pointer_array.begin(), inode16_type::capacity + 1),
                   children.pointer_array.end(), nullptr);
@@ -888,14 +957,14 @@ public:
         std::fill(child_indices.begin(), child_indices.end(), empty_child);
 
         std::uint8_t next_child = 0;
-        for (unsigned child_i = 0; child_i < 256; child_i++) {
+        for (unsigned child_i = 0; child_i != 256; ++child_i) {
             const auto child_ptr = source_node.children[child_i];
             if (child_ptr == nullptr)
                 continue;
 
             child_indices[child_i] = next_child;
-            children.pointer_array[next_child] = source_node.children[child_i];
-            this->reparent(children.pointer_array[next_child], child_i);
+            children[next_child] = source_node.children[child_i];
+            this->reparent(children[next_child], child_i);
             ++next_child;
 
             if (next_child == this->children_count)
@@ -906,54 +975,22 @@ public:
     constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(child_indices[key_byte] == empty_child);
-        unsigned i{0};
-#if defined(__SSE4_2__)
-        const auto nullptr_vector = _mm_setzero_si128();
-        while (true) {
-            const auto ptr_vec0 = _mm_load_si128(&children.pointer_vector[i]);
-            const auto ptr_vec1 = _mm_load_si128(&children.pointer_vector[i + 1]);
-            const auto ptr_vec2 = _mm_load_si128(&children.pointer_vector[i + 2]);
-            const auto ptr_vec3 = _mm_load_si128(&children.pointer_vector[i + 3]);
-            const auto vec0_cmp = _mm_cmpeq_epi64(ptr_vec0, nullptr_vector);
-            const auto vec1_cmp = _mm_cmpeq_epi64(ptr_vec1, nullptr_vector);
-            const auto vec2_cmp = _mm_cmpeq_epi64(ptr_vec2, nullptr_vector);
-            const auto vec3_cmp = _mm_cmpeq_epi64(ptr_vec3, nullptr_vector);
-            // OK to treat 64-bit comparison result as 32-bit vector: we need to find
-            // the first 0xFF only.
-            const auto vec01_cmp = _mm_packs_epi32(vec0_cmp, vec1_cmp);
-            const auto vec23_cmp = _mm_packs_epi32(vec2_cmp, vec3_cmp);
-            const auto vec_cmp = _mm_packs_epi32(vec01_cmp, vec23_cmp);
-            const unsigned int cmp_mask = _mm_movemask_epi8(vec_cmp);
-            if (cmp_mask != 0) {
-                i = (i << 1u) + ((tzcnt(cmp_mask) + 1u) >> 1u);
-                break;
-            }
-            i += 4;
-        }
-#else  // No SSE4.2 support
-        node_ptr child_ptr;
-        while (true) {
-            child_ptr = children.pointer_array[i];
-            if (child_ptr == nullptr)
-                break;
-            assert(i < 255);
-            ++i;
-        }
-#endif // #if defined(__SSE4_2__)
-        assert(children.pointer_array[i] == nullptr);
-        child_indices[key_byte] = static_cast<std::uint8_t>(i);
-        children.pointer_array[i] = child.release();
+        unsigned int i = find_first_null(children, 0);
+        assert(i < children.size());
+        assert(children[i] == nullptr);
+        child_indices[key_byte] = i;
+        children[i] = child.release();
         ++this->children_count;
 
-        return iterator(children.pointer_array[i], key_byte, this->tagged_self());
+        return iterator(children[i], key_byte, this->tagged_self());
     }
 
     [[nodiscard]] constexpr const_iterator leftmost_child(std::uint8_t start) noexcept
     {
-        auto it = get_child_pos(child_indices, start, empty_child);
+        auto it = std::find_if_not(std::next(child_indices.begin(), start), child_indices.end(),
+                                   [](std::uint8_t u) { return u == empty_child; });
         return it != child_indices.end()
-                   ? const_iterator(children.pointer_array[*it], it - child_indices.begin(),
-                                    this->tagged_self())
+                   ? const_iterator(children[*it], it - child_indices.begin(), this->tagged_self())
                    : const_iterator{};
     }
 
@@ -967,33 +1004,32 @@ public:
     constexpr void remove(std::uint8_t child_index) noexcept
     {
         verify_remove_preconditions(child_index);
-        children.pointer_array[child_indices[child_index]] = nullptr;
+        children[child_indices[child_index]] = nullptr;
         assign_empty_child(child_indices, child_index);
         --this->children_count;
     }
 
     [[nodiscard]] constexpr const_iterator find_child(std::uint8_t key_byte) noexcept
     {
-        if (child_indices[key_byte] != empty_child) {
-            const auto child_i = child_indices[key_byte];
-            return const_iterator(children.pointer_array[child_i], key_byte, this->tagged_self());
-        }
-        return const_iterator{};
+        const auto child_i = child_indices[key_byte];
+        return child_i != empty_child
+                   ? const_iterator(children[child_i], key_byte, this->tagged_self())
+                   : const_iterator{};
     }
 
     constexpr void replace(iterator pos, node_ptr child) noexcept
     {
         assert(pos.parent() == this->tagged_self());
         const auto child_i = child_indices[pos.index()];
-        assert(pos.node() == children.pointer_array[child_i]);
-        children.pointer_array[child_i] = child;
-        this->reparent(children.pointer_array[child_i], pos.index());
+        assert(pos.node() == children[child_i]);
+        children[child_i] = child;
+        this->reparent(children[child_i], pos.index());
     }
 
     constexpr void delete_subtree(Db& db_instance) noexcept
     {
         for (unsigned i = 0; i < this->capacity; ++i) {
-            const auto child = children.pointer_array[i];
+            const auto child = children[i];
             if (child != nullptr) {
                 db_instance.deallocate(child);
             }
@@ -1004,13 +1040,13 @@ public:
     {
         parent_type::dump(os);
         os << ", key bytes & child indices\n";
-        for (unsigned i = 0; i < 256; i++)
+        for (unsigned i = 0; i != 256; ++i)
             if (child_indices[i] != empty_child) {
                 os << " ";
                 dump_byte(os, static_cast<std::uint8_t>(i));
                 os << ", child index = " << static_cast<unsigned>(child_indices[i]) << ": ";
-                assert(children.pointer_array[child_indices[i]] != nullptr);
-                parent_type::dump(os, children.pointer_array[child_indices[i]]);
+                assert(children[child_indices[i]] != nullptr);
+                parent_type::dump(os, children[child_indices[i]]);
             }
     }
 
@@ -1018,23 +1054,12 @@ private:
     constexpr void verify_remove_preconditions(std::uint8_t child_index) const noexcept
     {
         assert(child_indices[child_index] != empty_child);
-        assert(children.pointer_array[child_indices[child_index]] != nullptr);
+        assert(children[child_indices[child_index]] != nullptr);
         boost::ignore_unused(child_index);
     }
 
     std::array<std::uint8_t, 256> child_indices;
-    union children_union {
-        std::array<node_ptr, basic_inode_48::capacity> pointer_array;
-#if defined(__SSE2__)
-        static_assert(basic_inode_48::capacity % 2 == 0, "inode_48 capacity is odd");
-        // To support unrolling without remainder
-        static_assert((basic_inode_48::capacity / 2) % 4 == 0,
-                      "inode_48 cannot support unrolling without remainder");
-        // No std::array below because it would ignore the alignment attribute
-        // NOLINTNEXTLINE(modernize-avoid-c-arrays)
-        __m128i pointer_vector[basic_inode_48::capacity / 2]; // NOLINT(runtime/arrays)
-#endif
-    } children;
+    children_array<node_ptr, basic_inode_48::capacity> children;
 
     friend basic_inode_16<Db>;
     friend basic_inode_256<Db>;
@@ -1072,7 +1097,7 @@ private:
             if (children_i == empty_child) {
                 children[i] = nullptr;
             } else {
-                children[i] = source_node->children.pointer_array[children_i];
+                children[i] = source_node->children[children_i];
                 this->reparent(children[i], i);
                 ++children_copied;
                 if (children_copied == inode48_type::capacity)
@@ -1115,10 +1140,9 @@ public:
 
     [[nodiscard]] constexpr const_iterator leftmost_child(std::uint8_t key_byte) noexcept
     {
-        auto it = get_child_pos(children, key_byte, nullptr);
-        return it != children.end()
-                   ? const_iterator(*it, it - children.begin(), this->tagged_self())
-                   : const_iterator{};
+        const unsigned int i = find_first_non_null(children, key_byte);
+        return i < children.size() ? const_iterator(children[i], i, this->tagged_self())
+                                   : const_iterator{};
     }
 
     [[nodiscard]] constexpr std::pair<const_iterator, std::uint8_t> lower_bound(
@@ -1166,7 +1190,7 @@ public:
     }
 
 private:
-    std::array<node_ptr, basic_inode_256::capacity> children;
+    children_array<node_ptr, basic_inode_256::capacity> children;
 
     friend inode48_type;
 };
