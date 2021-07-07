@@ -134,7 +134,7 @@ public:
     }
 
     [[nodiscard]] static constexpr const_iterator leftmost_child(node_ptr node,
-                                                                 std::uint8_t start = 0) noexcept
+                                                                 unsigned int start = 0) noexcept
     {
         return dispatch_inode(node, [start](auto& inode) { return inode.leftmost_child(start); });
     }
@@ -142,7 +142,7 @@ public:
     [[nodiscard]] static constexpr const_iterator leftmost_leaf(node_ptr node,
                                                                 int start = 0) noexcept
     {
-        assert(start >= 0 && start <= 255);
+        assert(start >= 0 && start <= 256);
         const_iterator pos(node);
         while (pos.tag() != node_type::LEAF) {
             pos = leftmost_child(pos.node(), start);
@@ -189,10 +189,9 @@ public:
 
     [[nodiscard]] node_ptr parent() const noexcept { return parent_; }
     [[nodiscard]] std::uint8_t index() const noexcept { return position; }
-
-    [[nodiscard]] iterator self_iterator(node_type tag) noexcept
+    [[nodiscard]] std::pair<node_ptr, std::uint8_t> pos_in_parent() const noexcept
     {
-        return iterator(node_ptr(this, tag), position, parent_);
+        return std::make_pair(parent_, position);
     }
 
 protected:
@@ -501,7 +500,7 @@ public:
         return const_iterator{};
     }
 
-    [[nodiscard]] constexpr const_iterator leftmost_child(std::uint8_t start) noexcept
+    [[nodiscard]] constexpr const_iterator leftmost_child(unsigned int start) noexcept
     {
         return start < this->children_count
                    ? const_iterator(children[start], start, this->tagged_self())
@@ -735,7 +734,7 @@ public:
         return const_iterator{};
     }
 
-    [[nodiscard]] constexpr const_iterator leftmost_child(std::uint8_t start) noexcept
+    [[nodiscard]] constexpr const_iterator leftmost_child(unsigned int start) noexcept
     {
         return start < this->children_count
                    ? const_iterator(children[start], start, this->tagged_self())
@@ -745,7 +744,7 @@ public:
     [[nodiscard, gnu::pure]] constexpr std::pair<const_iterator, std::uint8_t> lower_bound(
         std::uint8_t key_byte) noexcept
     {
-        const auto insert_pos_index = sse2::key_lower_bound(keys.sse, key_byte);
+        const unsigned int insert_pos_index = sse2::key_lower_bound(keys.sse, key_byte);
         auto pos = leftmost_child(insert_pos_index);
         return std::make_pair(pos, keys.byte_array[pos.index()]);
     }
@@ -841,14 +840,15 @@ template <typename NodePtr, unsigned int N, typename Predicate>
                                                 unsigned int start, Predicate pred) noexcept
 {
 #if defined(__SSE4_2__)
-    const unsigned int bucket_end = std::min(((start + 7) / 8) * 8, N);
+    constexpr unsigned int mod_8 = ~7u;
+    const unsigned int bucket_end = std::min((start + 7) & mod_8, N);
     for (; start != bucket_end; ++start) {
         if (pred(children[start]))
             return start;
     }
     constexpr unsigned int max_siz = N / 2;
     const __m128i nullptr_vector = _mm_setzero_si128();
-    unsigned int i = start >> 1;
+    unsigned int i = bucket_end >> 1;
     for (; i != max_siz; i += 4) {
         const auto vec0_cmp = _mm_cmpeq_epi64(children.pointer_vector[i], nullptr_vector);
         const auto vec1_cmp = _mm_cmpeq_epi64(children.pointer_vector[i + 1], nullptr_vector);
@@ -985,7 +985,7 @@ public:
         return iterator(children[i], key_byte, this->tagged_self());
     }
 
-    [[nodiscard]] constexpr const_iterator leftmost_child(std::uint8_t start) noexcept
+    [[nodiscard]] constexpr const_iterator leftmost_child(unsigned int start) noexcept
     {
         auto it = std::find_if_not(std::next(child_indices.begin(), start), child_indices.end(),
                                    [](std::uint8_t u) { return u == empty_child; });
@@ -1138,7 +1138,7 @@ public:
         return const_iterator(children[key_byte], key_byte, this->tagged_self());
     }
 
-    [[nodiscard]] constexpr const_iterator leftmost_child(std::uint8_t key_byte) noexcept
+    [[nodiscard]] constexpr const_iterator leftmost_child(unsigned int key_byte) noexcept
     {
         const unsigned int i = find_first_non_null(children, key_byte);
         return i < children.size() ? const_iterator(children[i], i, this->tagged_self())

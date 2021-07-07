@@ -269,6 +269,7 @@ private:
 
     [[nodiscard]] const_iterator internal_find(fast_key_type key) const noexcept;
 
+    [[nodiscard]] const_iterator forward_step(const_iterator pos) const noexcept;
     template <typename Filter>
     [[nodiscard]] const_iterator internal_bound(bitwise_key key, Filter filter) const noexcept;
     [[nodiscard]] const_iterator internal_lower_bound(fast_key_type key) const noexcept;

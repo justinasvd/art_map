@@ -9,6 +9,10 @@
 
 #include <boost/config.hpp> // likely/unlikely macros
 
+#if defined(__SSE2__)
+#include <xmmintrin.h>
+#endif
+
 namespace art
 {
 namespace detail
@@ -161,18 +165,19 @@ private:
         do {
             // Parent node is not yet exhausted, try to find a leftmost leaf
             // from the current position.
-            if (position < 255) {
-                auto leaf = INode::leftmost_leaf(parent_, position + 1);
-                if (leaf.node()) {
-                    assert(leaf.parent() != nullptr);
-                    *this = leaf;
-                    return *this;
-                }
+            auto leaf = INode::leftmost_leaf(parent_, position + 1);
+            if (leaf.node()) {
+                assert(leaf.parent() != nullptr);
+                *this = leaf;
+                return *this;
             }
 
             // Parent node has been exhausted. Try going one level up
-            *this = static_cast<inode_type*>(parent_.get())->self_iterator(parent_.tag());
-            __builtin_prefetch(parent_.get());
+            node_ = parent_;
+            std::tie(parent_, position) = inode()->pos_in_parent();
+#if defined(__SSE2__)
+            _mm_prefetch(parent_.get(), _MM_HINT_T0);
+#endif
         } while (parent_ != nullptr);
 
         // Reset the final position if the node is not a leaf. This is done to ensure
