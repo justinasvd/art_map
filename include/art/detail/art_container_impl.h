@@ -156,17 +156,6 @@ inline unique_node_ptr<Node, db<P>> db<P>::make_node_ptr(Args&&... args)
 }
 
 template <typename P>
-template <typename... Args>
-inline typename db<P>::leaf_unique_ptr db<P>::make_leaf_ptr(bitwise_key key, Args&&... args)
-{
-    // Allocate a single leaf
-    auto leaf = make_node_ptr<leaf_type>(key);
-    // Emplace the value into the leaf
-    leaf->emplace_value(allocator(), std::forward<Args>(args)...);
-    return leaf;
-}
-
-template <typename P>
 template <typename Node>
 inline void db<P>::deallocate_node(Node* node) noexcept
 {
@@ -176,6 +165,7 @@ inline void db<P>::deallocate_node(Node* node) noexcept
     assert(count<Node>() != 0);
 
     node_allocator_type alloc(allocator());
+    node_allocator_traits::destroy(alloc, node);
     node_allocator_traits::deallocate(alloc, node, 1);
 
     --count<Node>();
@@ -185,7 +175,6 @@ template <typename P>
 inline void db<P>::deallocate(leaf_type* leaf) noexcept(
     std::is_nothrow_destructible<mapped_type>::value)
 {
-    leaf->destroy_value(allocator());
     deallocate_node(leaf);
 }
 
@@ -275,7 +264,7 @@ inline typename db<P>::iterator db<P>::internal_emplace(iterator hint, bitwise_k
     assert(bitk.max_size() >= key.second);
 
     // Preemptively create a leaf. This also ensures strong exception safety
-    auto leaf_ptr = make_leaf_ptr(bitk, std::forward<Args>(args)...);
+    auto leaf_ptr = make_node_ptr<leaf_type>(bitk, std::forward<Args>(args)...);
 
     if (BOOST_UNLIKELY(empty())) {
         assert(!hint.node());

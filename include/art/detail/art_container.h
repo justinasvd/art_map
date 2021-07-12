@@ -314,10 +314,6 @@ private:
     template <typename Node, typename... Args>
     unique_node_ptr<Node, self_t> make_node_ptr(Args&&... args);
 
-    // Leaf creation/deallocation
-    template <typename... Args>
-    [[nodiscard]] leaf_unique_ptr make_leaf_ptr(bitwise_key key, Args&&... args);
-
     template <typename Node> void deallocate_node(Node* node) noexcept;
     void deallocate(inode_4* node) noexcept { deallocate_node(node); }
     void deallocate(inode_16* node) noexcept { deallocate_node(node); }

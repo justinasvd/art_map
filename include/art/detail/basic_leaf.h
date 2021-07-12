@@ -3,45 +3,32 @@
 
 #include "art_node_base.h"
 
-#include <memory>
-
 namespace art
 {
 namespace detail
 {
 
 // Helper struct for leaf node-related data
-template <typename BitwiseKey, typename T, typename Alloc>
+template <typename BitwiseKey, typename T>
 struct basic_leaf final : public art_node_base<BitwiseKey> {
     using value_type = T;
-    using allocator_type = Alloc;
-    using allocator_traits = std::allocator_traits<Alloc>;
     using bitwise_key = BitwiseKey;
     using parent_type = art_node_base<BitwiseKey>;
     using key_type = typename BitwiseKey::key_type;
 
-    explicit constexpr basic_leaf(bitwise_key key) noexcept
+    template <typename... Args>
+    constexpr basic_leaf(bitwise_key key,
+                         Args&&... args) noexcept(std::is_nothrow_constructible<T>::value)
         : parent_type(key)
+        , data(std::forward<Args>(args)...)
     {
     }
 
     // There is always a single element in this leaf
     [[nodiscard]] static constexpr std::size_t size() noexcept { return 1; }
 
-    template <typename... Args>
-    void emplace_value(allocator_type& alloc,
-                       Args&&... args) noexcept(std::is_nothrow_constructible<T>::value)
-    {
-        allocator_traits::construct(alloc, addr(), std::forward<Args>(args)...);
-    }
-
-    void destroy_value(allocator_type& alloc) noexcept(std::is_nothrow_destructible<T>::value)
-    {
-        allocator_traits::destroy(alloc, addr());
-    }
-
-    [[nodiscard]] T& value() noexcept { return *addr(); }
-    [[nodiscard]] const T& value() const noexcept { return *addr(); }
+    [[nodiscard]] T& value() noexcept { return data; }
+    [[nodiscard]] const T& value() const noexcept { return data; }
 
     // Overwrite currently held value
     template <typename... Args>
@@ -49,7 +36,7 @@ struct basic_leaf final : public art_node_base<BitwiseKey> {
         std::is_nothrow_constructible<T>::value&& std::is_nothrow_move_assignable<T>::value)
     {
         T tmp(std::forward<Args>(args)...);
-        value() = std::move(tmp);
+        data = std::move(tmp);
     }
 
     [[noreturn]] static void push_back(T&&) { throw std::runtime_error("basic_leaf: push_back"); }
@@ -62,34 +49,25 @@ struct basic_leaf final : public art_node_base<BitwiseKey> {
     }
 
 private:
-    [[nodiscard]] T* addr() noexcept { return reinterpret_cast<T*>(&data); }
-    [[nodiscard]] const T* addr() const noexcept { return reinterpret_cast<const T*>(&data); }
-
-private:
-    std::aligned_storage_t<sizeof(T), alignof(T)> data;
+    T data;
 };
 
 // Specialization for integral constants that do not take any space
-template <typename BitwiseKey, typename T, T V, typename Alloc>
-struct basic_leaf<BitwiseKey, std::integral_constant<T, V>, Alloc> final
+template <typename BitwiseKey, typename T, T V>
+struct basic_leaf<BitwiseKey, std::integral_constant<T, V>> final
     : public art_node_base<BitwiseKey> {
     using value_type = std::integral_constant<T, V>;
-    using allocator_type = Alloc;
     using bitwise_key = BitwiseKey;
     using parent_type = art_node_base<BitwiseKey>;
     using key_type = typename BitwiseKey::key_type;
 
-    explicit constexpr basic_leaf(bitwise_key key) noexcept
+    constexpr basic_leaf(bitwise_key key, value_type) noexcept
         : parent_type(key)
     {
     }
 
     // There is always a single element in this leaf
     [[nodiscard]] static constexpr std::size_t size() noexcept { return 1; }
-
-    // Does nothing, since the value is a constant expression
-    template <typename... Args> static void emplace_value(allocator_type&, Args&&...) noexcept {}
-    static void destroy_value(allocator_type&) noexcept {}
 
     // Simply return a value
     [[nodiscard]] static constexpr value_type value() noexcept { return value_type(); }

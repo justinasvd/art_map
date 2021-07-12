@@ -35,7 +35,7 @@ struct container_traits {
     // Using 3 bits in the node pointer for the tag, which means that nodes must
     // be aligned to 8 byte boundary.
     using node_ptr = tagged_ptr<node_base, tagged::direct<node_base, 3, node_type>>;
-    using leaf_type = basic_leaf<bitwise_key, mapped_type, allocator_type>;
+    using leaf_type = basic_leaf<bitwise_key, mapped_type>;
 };
 
 // Fast argument type

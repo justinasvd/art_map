@@ -44,16 +44,16 @@ namespace detail
 namespace sse2
 {
 // Idea from https://stackoverflow.com/a/32945715/80458
-inline __m128i less_or_equal_epu8(__m128i x, __m128i y) noexcept
+[[nodiscard]] inline __m128i less_or_equal_epu8(__m128i x, __m128i y) noexcept
 {
     return _mm_cmpeq_epi8(_mm_min_epu8(y, x), y);
 }
-inline __m128i greater_or_equal_epu8(__m128i x, __m128i y) noexcept
+[[nodiscard]] inline __m128i greater_or_equal_epu8(__m128i x, __m128i y) noexcept
 {
     return _mm_cmpeq_epi8(_mm_max_epu8(y, x), y);
 }
 
-inline unsigned int clamped_pos(__m128i x, std::uint8_t clamp) noexcept
+[[nodiscard]] inline unsigned int clamped_pos(__m128i x, std::uint8_t clamp) noexcept
 {
     // This is not as inefficient as it seems. If sufficiently advanced instruction
     // set is used by the compiler, then the result of _mm_movemask_epi8 will be
@@ -61,15 +61,17 @@ inline unsigned int clamped_pos(__m128i x, std::uint8_t clamp) noexcept
     return static_cast<unsigned int>(_mm_movemask_epi8(x)) & ((1u << clamp) - 1u);
 }
 
-inline unsigned int key_equal_mask(__m128i x, std::uint8_t y, std::uint8_t clamp) noexcept
+[[nodiscard]] inline unsigned int key_equal_mask(__m128i x, std::uint8_t y,
+                                                 std::uint8_t clamp) noexcept
 {
     return clamped_pos(_mm_cmpeq_epi8(x, _mm_set1_epi8(y)), clamp);
 }
-inline unsigned int key_upper_bound(__m128i x, std::uint8_t y, std::uint8_t clamp) noexcept
+[[nodiscard]] inline unsigned int key_upper_bound(__m128i x, std::uint8_t y,
+                                                  std::uint8_t clamp) noexcept
 {
     return _mm_popcnt_u32(clamped_pos(greater_or_equal_epu8(x, _mm_set1_epi8(y)), clamp));
 }
-inline unsigned int key_lower_bound(__m128i x, std::uint8_t y) noexcept
+[[nodiscard]] inline unsigned int key_lower_bound(__m128i x, std::uint8_t y) noexcept
 {
     return tzcnt(_mm_movemask_epi8(less_or_equal_epu8(x, _mm_set1_epi8(y))));
 }
@@ -325,10 +327,14 @@ inline void assign_empty_child(std::array<std::uint8_t, N>& bytes, std::uint8_t 
     // GCC 10+ incorrectly reports that we are writing 1 byte into a region of size 0
     // It is unclear how to properly appease the compiler in this scenario, so we simply
     // disable the warning around the "offending" statement
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
     bytes[pos] = empty_child;
+#if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
+#endif
 }
 
 template <typename Db>

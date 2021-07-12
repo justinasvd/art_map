@@ -52,6 +52,8 @@ int main()
         assert(cnt == 1);
     }
 
+    db.emplace(16545, 54545);
+
     db.dump(std::cout);
 
     std::cout << "Size: " << db.size() << std::endl;
