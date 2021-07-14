@@ -67,6 +67,22 @@ template <typename C> inline void fwditer(benchmark::State& state)
     }
 }
 
+template <typename C> inline void reviter(benchmark::State& state)
+{
+    C container;
+
+    // Fill the container
+    fill_container(container, bench_dataset<C>());
+
+    auto it = container.rbegin();
+
+    for (auto _ : state) {
+        do_not_optimize(*it);
+        if (++it == container.rend())
+            it = container.rbegin();
+    }
+}
+
 // Benchmark insertion of values into a container.
 template <typename C> inline void insert(benchmark::State& state)
 {
@@ -243,6 +259,23 @@ template <typename C> void upper_bound(benchmark::State& state)
     }
 }
 
+template <typename C> void upper_bound_prev(benchmark::State& state)
+{
+    C container;
+    auto values = fill_container(container);
+
+    auto it = values.begin();
+    for (auto _ : state) {
+        auto actual_key = test::key_of_value(*it);
+        auto r = std::prev(container.upper_bound(actual_key));
+        do_not_optimize(&r);
+        assert(test::key_of_value(*r) <= actual_key);
+
+        if (++it == values.end())
+            it = values.begin();
+    }
+}
+
 #define GENERATE_BENCH_SET(TestName, ...)                                                          \
     BENCHMARK_TEMPLATE(TestName, std::__VA_ARGS__);                                                \
     BENCHMARK_TEMPLATE(TestName, art::__VA_ARGS__);                                                \
@@ -259,6 +292,7 @@ template <typename C> void upper_bound(benchmark::State& state)
 
 #define GENERATE_BENCHMARKS(...)                                                                   \
     GENERATE_BENCH_SET(fwditer, __VA_ARGS__);                                                      \
+    GENERATE_BENCH_SET(reviter, __VA_ARGS__);                                                      \
     GENERATE_BENCH_SET_CPP20(contains, __VA_ARGS__);                                               \
     GENERATE_BENCH_SET(find, __VA_ARGS__);                                                         \
     GENERATE_BENCH_SET(find_sorted, __VA_ARGS__);                                                  \
@@ -267,7 +301,8 @@ template <typename C> void upper_bound(benchmark::State& state)
     GENERATE_BENCH_SET(erase_sequential, __VA_ARGS__);                                             \
     GENERATE_BENCH_SET(lower_bound, __VA_ARGS__);                                                  \
     GENERATE_BENCH_SET(lower_bound_sorted, __VA_ARGS__);                                           \
-    GENERATE_BENCH_SET(upper_bound, __VA_ARGS__)                                                   \
+    GENERATE_BENCH_SET(upper_bound, __VA_ARGS__);                                                  \
+    GENERATE_BENCH_SET(upper_bound_prev, __VA_ARGS__)                                              \
     /**/
 
 GENERATE_BENCHMARKS(set<int>);

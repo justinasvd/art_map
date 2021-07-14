@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <array>
+#include <climits>
 
 #include <boost/core/ignore_unused.hpp>
 
@@ -79,6 +80,145 @@ namespace sse2
 } // namespace sse2
 #endif // SSE2
 
+template <typename T, unsigned int Capacity> union simd_array {
+    using array_type = std::array<T, Capacity>;
+    using iterator = typename array_type::iterator;
+    using const_iterator = typename array_type::const_iterator;
+
+    array_type data;
+
+    [[nodiscard]] static constexpr unsigned int size() noexcept { return Capacity; }
+
+    [[nodiscard]] T& operator[](unsigned int n) noexcept { return data[n]; }
+    [[nodiscard]] const T operator[](unsigned int n) const noexcept { return data[n]; }
+
+    [[nodiscard]] constexpr iterator begin() noexcept { return data.begin(); }
+    [[nodiscard]] constexpr iterator end() noexcept { return data.end(); }
+    [[nodiscard]] constexpr const_iterator begin() const noexcept { return data.begin(); }
+    [[nodiscard]] constexpr const_iterator end() const noexcept { return data.end(); }
+
+#if defined(__SSE2__)
+    static constexpr unsigned int pack_size = sizeof(__m128i) / sizeof(T);
+    static_assert(pack_size * sizeof(T) == sizeof(__m128i),
+                  "Cannot pack array values to SIMD data");
+    static_assert(Capacity % pack_size == 0, "SIMD capacity must be divisible by pack size");
+
+    static constexpr unsigned int sse_capacity = Capacity / pack_size;
+    __m128i sse_data[sse_capacity];
+#endif
+};
+
+// This is a lightweight implementation of std::bitset with some SSE optimizations
+template <unsigned int N> class static_bitset
+{
+    using bucket_type = std::uint64_t;
+    static constexpr unsigned int bucket_bits = CHAR_BIT * sizeof(bucket_type);
+    static constexpr unsigned int num_buckets = N / bucket_bits;
+
+public:
+    constexpr static_bitset() noexcept
+        : bits{}
+    {
+    }
+
+    [[nodiscard]] static constexpr unsigned int size() noexcept { return N; }
+
+    [[nodiscard]] bool test(unsigned int pos) const noexcept
+    {
+        return static_cast<bool>(bits[bucket(pos)] & bitpos_mask(pos));
+    }
+    static_bitset& set(unsigned int pos) noexcept
+    {
+        bits.data[bucket(pos)] |= bitpos_mask(pos);
+        return *this;
+    }
+    static_bitset& clear(unsigned int pos) noexcept
+    {
+        bits.data[bucket(pos)] &= ~bitpos_mask(pos);
+        return *this;
+    }
+
+    [[nodiscard]] unsigned int find_first_set(unsigned int pos) const noexcept
+    {
+        if (pos < N) {
+            unsigned int b = bucket(pos);
+            // Clear bits before `pos` that are in the same bucket
+            bucket_type r = bits[b] & ~(bitpos_mask(pos) - 1);
+            do {
+                if (r) {
+                    return b * bucket_bits + tzcnt(r);
+                }
+                if (++b == num_buckets)
+                    break;
+                r = bits[b];
+            } while (true);
+        }
+        return N;
+    }
+
+    [[nodiscard]] unsigned int find_last_set(unsigned int pos) const noexcept
+    {
+        static constexpr bucket_type all_selected = ~static_cast<bucket_type>(0);
+        static constexpr unsigned int max_bit_pos = bucket_bits - 1;
+
+        pos = std::min(pos, N - 1);
+        unsigned int b = bucket(pos);
+        // Clear bits after `pos` that are in the same bucket
+        bucket_type r = bits[b] & (all_selected >> (max_bit_pos - pos % bucket_bits));
+        do {
+            if (r) {
+                return b * bucket_bits + (max_bit_pos - __builtin_clzl(r));
+            }
+            if (b-- == 0u)
+                break;
+            r = bits[b];
+        } while (true);
+        return N;
+    }
+
+    template <typename Fun> void for_each_bit(Fun fun) const noexcept(noexcept(fun(0u)))
+    {
+        for (unsigned int b = 0; b != num_buckets; ++b) {
+            const unsigned int bit_offset = b * bucket_bits;
+            bucket_type r = bits[b];
+            while (r) {
+                fun(bit_offset + tzcnt(r)); // Report the position of the bit
+                r &= r - 1;                 // Reset lowest bit
+            }
+        }
+    }
+
+    [[nodiscard]] unsigned int count() const noexcept
+    {
+        unsigned int c = _mm_popcnt_u64(bits[0]);
+        for (unsigned int i = 1; i != num_buckets; ++i)
+            c += _mm_popcnt_u64(bits[i]);
+        return c;
+    }
+
+    void dump(std::ostream& os) const
+    {
+        for (bucket_type b : bits.data) {
+            dump_bytes(os, b);
+        }
+    }
+
+private:
+    [[nodiscard]] static unsigned int bucket(unsigned int pos) noexcept
+    {
+        const unsigned int b = pos / bucket_bits;
+        assert(b < num_buckets);
+        return b;
+    }
+    [[nodiscard]] static bucket_type bitpos_mask(unsigned int pos) noexcept
+    {
+        return static_cast<bucket_type>(1) << (pos % bucket_bits);
+    }
+
+private:
+    simd_array<bucket_type, num_buckets> bits;
+};
+
 template <typename Db> class basic_inode_impl : public art_node_base<typename Db::bitwise_key>
 {
     using base_t = art_node_base<typename Db::bitwise_key>;
@@ -87,7 +227,7 @@ public:
     using inode_type = basic_inode_impl<Db>;
     using inode4_type = basic_inode_4<Db>;
     using inode16_type = basic_inode_16<Db>;
-    using inode48_type = basic_inode_48<Db>;
+    using inode64_type = basic_inode_64<Db>;
     using inode256_type = basic_inode_256<Db>;
 
     using leaf_type = typename Db::leaf_type;
@@ -113,8 +253,8 @@ public:
             return vis(*static_cast<inode4_type*>(node.get()));
         case node_type::I16:
             return vis(*static_cast<inode16_type*>(node.get()));
-        case node_type::I48:
-            return vis(*static_cast<inode48_type*>(node.get()));
+        case node_type::I64:
+            return vis(*static_cast<inode64_type*>(node.get()));
         case node_type::I256:
             return vis(*static_cast<inode256_type*>(node.get()));
         default:
@@ -153,6 +293,23 @@ public:
         return pos;
     }
 
+    [[nodiscard]] static constexpr const_iterator rightmost_child(node_ptr node,
+                                                                  unsigned int start) noexcept
+    {
+        return dispatch_inode(node, [start](auto& inode) { return inode.rightmost_child(start); });
+    }
+
+    [[nodiscard]] static constexpr const_iterator rightmost_leaf(node_ptr node, int start) noexcept
+    {
+        assert(start >= 0 && start < 256);
+        const_iterator pos(node);
+        while (pos.tag() != node_type::LEAF) {
+            pos = rightmost_child(pos.node(), start);
+            start = 255;
+        }
+        return pos;
+    }
+
     static void dump(std::ostream& os, const node_ptr node)
     {
         os << "node at: " << node.get();
@@ -176,9 +333,9 @@ public:
             os << "I16: ";
             static_cast<const inode16_type*>(node.get())->dump(os);
             break;
-        case node_type::I48:
-            os << "I48: ";
-            static_cast<const inode48_type*>(node.get())->dump(os);
+        case node_type::I64:
+            os << "I64: ";
+            static_cast<const inode64_type*>(node.get())->dump(os);
             break;
         case node_type::I256:
             os << "I256: ";
@@ -321,22 +478,6 @@ public:
 
 static constexpr std::uint8_t empty_child = 0xFF;
 
-template <std::size_t N>
-inline void assign_empty_child(std::array<std::uint8_t, N>& bytes, std::uint8_t pos) noexcept
-{
-    // GCC 10+ incorrectly reports that we are writing 1 byte into a region of size 0
-    // It is unclear how to properly appease the compiler in this scenario, so we simply
-    // disable the warning around the "offending" statement
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic push
-#pragma GCC diagnostic ignored "-Wstringop-overflow"
-#endif
-    bytes[pos] = empty_child;
-#if defined(__GNUC__) && !defined(__clang__)
-#pragma GCC diagnostic pop
-#endif
-}
-
 template <typename Db>
 using basic_inode_4_parent =
     basic_inode<Db, 2, 4, node_type::I4, fake_inode, basic_inode_16<Db>, basic_inode_4<Db>>;
@@ -454,7 +595,19 @@ public:
         }
 
         --children_count;
-        assign_empty_child(keys.byte_array, children_count);
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
+        // GCC 10+ incorrectly reports that we are writing 1 byte into a region of size 0
+        // It is unclear how to properly appease the compiler in this scenario, so we simply
+        // disable the warning around the "offending" statement
+        keys.byte_array[children_count] = empty_child;
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
         this->children_count = children_count;
 
         assert(std::is_sorted(keys.byte_array.cbegin(), keys.byte_array.cbegin() + children_count));
@@ -511,6 +664,12 @@ public:
         return start < this->children_count
                    ? const_iterator(children[start], start, this->tagged_self())
                    : const_iterator{};
+    }
+
+    [[nodiscard]] constexpr const_iterator rightmost_child(unsigned int end) noexcept
+    {
+        end = std::min(end, static_cast<unsigned int>(this->children_count - 1));
+        return const_iterator(children[end], end, this->tagged_self());
     }
 
     [[nodiscard]] constexpr std::pair<const_iterator, std::uint8_t> lower_bound(
@@ -602,7 +761,7 @@ private:
 
 template <typename Db>
 using basic_inode_16_parent = basic_inode<Db, 5, 16, node_type::I16, basic_inode_4<Db>,
-                                          basic_inode_48<Db>, basic_inode_16<Db>>;
+                                          basic_inode_64<Db>, basic_inode_16<Db>>;
 
 template <typename Db> class basic_inode_16 : public basic_inode_16_parent<Db>
 {
@@ -610,7 +769,7 @@ private:
     using parent_type = basic_inode_16_parent<Db>;
     using inode4_type = typename parent_type::inode4_type;
     using inode16_type = typename parent_type::inode16_type;
-    using inode48_type = typename parent_type::inode48_type;
+    using inode64_type = typename parent_type::inode64_type;
     using node_ptr = typename parent_type::node_ptr;
     using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
     using const_iterator = typename Db::const_iterator;
@@ -649,30 +808,26 @@ private:
     }
 
 public:
-    constexpr basic_inode_16(const inode48_type& source_node, std::uint8_t child_to_delete) noexcept
+    constexpr basic_inode_16(const inode64_type& source_node, std::uint8_t child_to_delete) noexcept
         : parent_type(source_node)
     {
         source_node.verify_remove_preconditions(child_to_delete);
 
-        // TODO(laurynas): consider AVX512 gather?
         unsigned next_child = 0;
-        for (unsigned i = 0; i != 256; ++i) {
-            const auto source_child_i = source_node.child_indices[i];
-            if (source_child_i != empty_child) {
+        source_node.child_bits.for_each_bit(
+            [&source_node, &next_child, this, child_to_delete](unsigned int i) {
                 if (child_to_delete != i) {
-                    keys.byte_array[next_child] = static_cast<std::uint8_t>(i);
+                    const auto source_child_i = source_node.child_indices[i];
+                    keys.byte_array[next_child] = i;
                     const auto source_child_ptr = source_node.children[source_child_i];
                     assert(source_child_ptr != nullptr);
                     children[next_child] = source_child_ptr;
                     this->reparent(children[next_child], next_child);
                     ++next_child;
-                    if (next_child == basic_inode_16::capacity)
-                        break;
                 } else {
                     parent_type::index(*this, next_child);
                 }
-            }
-        }
+            });
 
         assert(basic_inode_16::capacity == this->children_count);
         assert(std::is_sorted(keys.byte_array.cbegin(),
@@ -747,6 +902,12 @@ public:
                    : const_iterator{};
     }
 
+    [[nodiscard]] constexpr const_iterator rightmost_child(unsigned int end) noexcept
+    {
+        end = std::min(end, static_cast<unsigned int>(this->children_count - 1));
+        return const_iterator(children[end], end, this->tagged_self());
+    }
+
     [[nodiscard, gnu::pure]] constexpr std::pair<const_iterator, std::uint8_t> lower_bound(
         std::uint8_t key_byte) noexcept
     {
@@ -816,100 +977,49 @@ protected:
 
 private:
     friend basic_inode_4<Db>;
-    friend basic_inode_48<Db>;
+    friend basic_inode_64<Db>;
 };
 
-template <typename NodePtr, unsigned int Capacity> union children_array {
-    std::array<NodePtr, Capacity> pointer_array;
-
-    [[nodiscard]] static constexpr unsigned int size() noexcept { return Capacity; }
-
-    [[nodiscard]] NodePtr& operator[](unsigned int n) noexcept { return pointer_array[n]; }
-    [[nodiscard]] const NodePtr operator[](unsigned int n) const noexcept
-    {
-        return pointer_array[n];
-    }
-#if defined(__SSE4_2__)
-    // To support unrolling without remainder
-    static_assert(Capacity % 8 == 0, "children_array capacity must be divisible by 8, otherwise it "
-                                     "cannot support unrolling without a remainder");
-    // No std::array below because it would ignore the alignment attribute
-    // NOLINTNEXTLINE(modernize-avoid-c-arrays)
-    static_assert(2 * sizeof(NodePtr) == sizeof(__m128i),
-                  "Incompatible architecture, expected 64 bit pointers");
-    __m128i pointer_vector[Capacity / 2]; // NOLINT(runtime/arrays)
-#endif
-};
-
-template <typename NodePtr, unsigned int N, typename Predicate>
-[[nodiscard]] inline unsigned int find_first_eq(const children_array<NodePtr, N>& children,
-                                                unsigned int start, Predicate pred) noexcept
+template <typename NodePtr, unsigned int N>
+[[nodiscard]] inline unsigned int find_first_null(const simd_array<NodePtr, N>& children) noexcept
 {
 #if defined(__SSE4_2__)
-    constexpr unsigned int mod_8 = ~7u;
-    const unsigned int bucket_end = std::min((start + 7) & mod_8, N);
-    for (; start != bucket_end; ++start) {
-        if (pred(children[start]))
-            return start;
-    }
-    constexpr unsigned int max_siz = N / 2;
+    using array_t = simd_array<NodePtr, N>;
+
+    constexpr unsigned int max_siz = array_t::sse_capacity;
     const __m128i nullptr_vector = _mm_setzero_si128();
-    unsigned int i = bucket_end >> 1;
+    unsigned int i = 0;
     for (; i != max_siz; i += 4) {
-        const auto vec0_cmp = _mm_cmpeq_epi64(children.pointer_vector[i], nullptr_vector);
-        const auto vec1_cmp = _mm_cmpeq_epi64(children.pointer_vector[i + 1], nullptr_vector);
-        const auto vec2_cmp = _mm_cmpeq_epi64(children.pointer_vector[i + 2], nullptr_vector);
-        const auto vec3_cmp = _mm_cmpeq_epi64(children.pointer_vector[i + 3], nullptr_vector);
+        const auto vec0_cmp = _mm_cmpeq_epi64(children.sse_data[i], nullptr_vector);
+        const auto vec1_cmp = _mm_cmpeq_epi64(children.sse_data[i + 1], nullptr_vector);
+        const auto vec2_cmp = _mm_cmpeq_epi64(children.sse_data[i + 2], nullptr_vector);
+        const auto vec3_cmp = _mm_cmpeq_epi64(children.sse_data[i + 3], nullptr_vector);
         // OK to treat 64-bit comparison result as 32-bit vector: we need to find
         // the first 0xFF only.
         const auto vec01_cmp = _mm_packs_epi32(vec0_cmp, vec1_cmp);
         const auto vec23_cmp = _mm_packs_epi32(vec2_cmp, vec3_cmp);
         const auto vec_cmp = _mm_packs_epi16(vec01_cmp, vec23_cmp);
-        const unsigned int cmp_mask = pred(_mm_movemask_epi8(vec_cmp));
+        const unsigned int cmp_mask = _mm_movemask_epi8(vec_cmp);
         if (cmp_mask != 0) {
             return (i << 1u) + ((tzcnt(cmp_mask) + 1u) >> 1u);
         }
     }
     // No entries were found
-    start = N;
+    return children.size();
 #else // No SSE4.2 support
-    while (start < N && !pred(children[start]))
-        ++start;
+    return std::distance(children.begin(), std::find(children.begin(), children.end(), nullptr));
 #endif
-    return start;
-}
-
-template <typename NodePtr, unsigned int N>
-[[nodiscard]] inline unsigned int find_first_null(const children_array<NodePtr, N>& children,
-                                                  unsigned int i) noexcept
-{
-    struct is_null_node {
-        unsigned int operator()(unsigned int x) const noexcept { return x; }
-        bool operator()(NodePtr ptr) const noexcept { return ptr == nullptr; }
-    };
-    return find_first_eq(children, i, is_null_node());
-}
-
-template <typename NodePtr, unsigned int N>
-[[nodiscard]] inline unsigned int find_first_non_null(const children_array<NodePtr, N>& children,
-                                                      unsigned int i) noexcept
-{
-    struct is_non_null_node {
-        unsigned int operator()(unsigned int x) const noexcept { return x ^ 0xFFFF; }
-        bool operator()(NodePtr ptr) const noexcept { return ptr != nullptr; }
-    };
-    return find_first_eq(children, i, is_non_null_node());
 }
 
 template <typename Db>
-using basic_inode_48_parent = basic_inode<Db, 17, 48, node_type::I48, basic_inode_16<Db>,
-                                          basic_inode_256<Db>, basic_inode_48<Db>>;
+using basic_inode_64_parent = basic_inode<Db, 17, 64, node_type::I64, basic_inode_16<Db>,
+                                          basic_inode_256<Db>, basic_inode_64<Db>>;
 
-template <typename Db> class basic_inode_48 : public basic_inode_48_parent<Db>
+template <typename Db> class basic_inode_64 : public basic_inode_64_parent<Db>
 {
-    using parent_type = basic_inode_48_parent<Db>;
+    using parent_type = basic_inode_64_parent<Db>;
     using inode16_type = typename parent_type::inode16_type;
-    using inode48_type = typename parent_type::inode48_type;
+    using inode64_type = typename parent_type::inode64_type;
     using inode256_type = typename parent_type::inode256_type;
     using node_ptr = typename parent_type::node_ptr;
     using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
@@ -919,7 +1029,7 @@ template <typename Db> class basic_inode_48 : public basic_inode_48_parent<Db>
 private:
     friend Db;
 
-    using basic_inode_48_parent<Db>::basic_inode_48_parent;
+    using basic_inode_64_parent<Db>::basic_inode_64_parent;
 
     [[nodiscard]] constexpr iterator populate(unique_node_ptr<inode16_type, Db> source_node,
                                               leaf_unique_ptr child, std::uint8_t key_byte) noexcept
@@ -929,61 +1039,63 @@ private:
 
         auto* const __restrict__ source_node_ptr = source_node.get();
 
-        // TODO(laurynas): initialize at declaration
-        // Cannot use memset without C++20 atomic_ref, but even then check whether
-        // this compiles to memset already
-        std::fill(child_indices.begin(), child_indices.end(), empty_child);
+        std::fill(child_indices.begin(), child_indices.end(), children.size());
 
         // TODO(laurynas): consider AVX512 scatter?
         for (std::uint8_t i = 0; i != inode16_type::capacity; ++i) {
             const std::uint8_t existing_key_byte = source_node_ptr->keys.byte_array[i];
+            child_bits.set(existing_key_byte);
             child_indices[existing_key_byte] = i;
             children[i] = source_node_ptr->children[i];
             this->reparent(children[i], existing_key_byte);
         }
 
-        assert(child_indices[key_byte] == empty_child);
+        assert(!child_bits.test(key_byte));
+        child_bits.set(key_byte);
         child_indices[key_byte] = inode16_type::capacity;
         children[inode16_type::capacity] = child.release();
         iterator inserted(children[inode16_type::capacity], key_byte, this->tagged_self());
 
-        std::fill(std::next(children.pointer_array.begin(), inode16_type::capacity + 1),
-                  children.pointer_array.end(), nullptr);
+        std::fill(std::next(children.begin(), inode16_type::capacity + 1), children.end(), nullptr);
         return inserted;
     }
 
 public:
-    constexpr basic_inode_48(inode256_type& source_node, std::uint8_t child_to_delete) noexcept
+    constexpr basic_inode_64(const inode256_type& source_node,
+                             std::uint8_t child_to_delete) noexcept
         : parent_type(source_node)
+        , child_bits(source_node.child_bits)
     {
-        source_node.children[child_to_delete] = nullptr;
+        assert(child_bits.test(child_to_delete));
+        child_bits.clear(child_to_delete);
+        assert(child_bits.count() == children.size());
 
         parent_type::index(*this, child_to_delete);
 
-        std::fill(child_indices.begin(), child_indices.end(), empty_child);
+        std::fill(child_indices.begin(), child_indices.end(), children.size());
 
         std::uint8_t next_child = 0;
-        for (unsigned child_i = 0; child_i != 256; ++child_i) {
+        child_bits.for_each_bit([&source_node, &next_child, this](unsigned int child_i) {
             const auto child_ptr = source_node.children[child_i];
-            if (child_ptr == nullptr)
-                continue;
+            assert(child_ptr != nullptr);
 
             child_indices[child_i] = next_child;
-            children[next_child] = source_node.children[child_i];
+            children[next_child] = child_ptr;
             this->reparent(children[next_child], child_i);
             ++next_child;
-
-            if (next_child == this->children_count)
-                break;
-        }
+        });
     }
 
     constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
-        assert(child_indices[key_byte] == empty_child);
-        unsigned int i = find_first_null(children, 0);
+        assert(!child_bits.test(key_byte) && !(child_indices[key_byte] < inode64_type::capacity));
+        // No need for lookups if the expected slot is free
+        const unsigned int i = children[this->children_count] == nullptr
+                                   ? this->children_count
+                                   : find_first_null(children);
         assert(i < children.size());
         assert(children[i] == nullptr);
+        child_bits.set(key_byte);
         child_indices[key_byte] = i;
         children[i] = child.release();
         ++this->children_count;
@@ -993,10 +1105,17 @@ public:
 
     [[nodiscard]] constexpr const_iterator leftmost_child(unsigned int start) noexcept
     {
-        auto it = std::find_if_not(std::next(child_indices.begin(), start), child_indices.end(),
-                                   [](std::uint8_t u) { return u == empty_child; });
-        return it != child_indices.end()
-                   ? const_iterator(children[*it], it - child_indices.begin(), this->tagged_self())
+        const unsigned int i = child_bits.find_first_set(start);
+        return i < child_bits.size()
+                   ? const_iterator(children[child_indices[i]], i, this->tagged_self())
+                   : const_iterator{};
+    }
+
+    [[nodiscard]] constexpr const_iterator rightmost_child(unsigned int end) noexcept
+    {
+        const unsigned int i = child_bits.find_last_set(end);
+        return i < child_bits.size()
+                   ? const_iterator(children[child_indices[i]], i, this->tagged_self())
                    : const_iterator{};
     }
 
@@ -1007,18 +1126,29 @@ public:
         return std::make_pair(pos, pos.index());
     }
 
-    constexpr void remove(std::uint8_t child_index) noexcept
+    constexpr void remove(std::uint8_t key_byte) noexcept
     {
-        verify_remove_preconditions(child_index);
-        children[child_indices[child_index]] = nullptr;
-        assign_empty_child(child_indices, child_index);
+        verify_remove_preconditions(key_byte);
+        child_bits.clear(key_byte);
+        const auto child_i = child_indices[key_byte];
+
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wstringop-overflow"
+#endif
+        child_indices[key_byte] = inode64_type::capacity;
+#if defined(__GNUC__) && !defined(__clang__)
+#pragma GCC diagnostic pop
+#endif
+
+        children[child_i] = nullptr;
         --this->children_count;
     }
 
     [[nodiscard]] constexpr const_iterator find_child(std::uint8_t key_byte) noexcept
     {
-        const auto child_i = child_indices[key_byte];
-        return child_i != empty_child
+        const unsigned int child_i = child_indices[key_byte];
+        return child_i < inode64_type::capacity
                    ? const_iterator(children[child_i], key_byte, this->tagged_self())
                    : const_iterator{};
     }
@@ -1046,26 +1176,29 @@ public:
     {
         parent_type::dump(os);
         os << ", key bytes & child indices\n";
-        for (unsigned i = 0; i != 256; ++i)
-            if (child_indices[i] != empty_child) {
-                os << " ";
-                dump_byte(os, static_cast<std::uint8_t>(i));
-                os << ", child index = " << static_cast<unsigned>(child_indices[i]) << ": ";
-                assert(children[child_indices[i]] != nullptr);
-                parent_type::dump(os, children[child_indices[i]]);
-            }
+        child_bits.for_each_bit([&os, this](unsigned int key_byte) {
+            os << " ";
+            dump_byte(os, key_byte);
+            const auto child_i = child_indices[key_byte];
+            assert(child_i < basic_inode_64::capacity);
+            os << ", child index = " << child_i << ": ";
+            assert(children[child_i] != nullptr);
+            parent_type::dump(os, children[child_i]);
+        });
     }
 
 private:
-    constexpr void verify_remove_preconditions(std::uint8_t child_index) const noexcept
+    constexpr void verify_remove_preconditions(std::uint8_t key_byte) const noexcept
     {
-        assert(child_indices[child_index] != empty_child);
-        assert(children[child_indices[child_index]] != nullptr);
-        boost::ignore_unused(child_index);
+        assert(child_bits.test(key_byte));
+        assert(child_indices[key_byte] < inode64_type::capacity);
+        assert(children[child_indices[key_byte]] != nullptr);
+        boost::ignore_unused(key_byte);
     }
 
+    static_bitset<256> child_bits;
     std::array<std::uint8_t, 256> child_indices;
-    children_array<node_ptr, basic_inode_48::capacity> children;
+    simd_array<node_ptr, basic_inode_64::capacity> children;
 
     friend basic_inode_16<Db>;
     friend basic_inode_256<Db>;
@@ -1073,12 +1206,12 @@ private:
 
 template <typename Db>
 using basic_inode_256_parent =
-    basic_inode<Db, 49, 256, node_type::I256, basic_inode_48<Db>, fake_inode, basic_inode_256<Db>>;
+    basic_inode<Db, 65, 256, node_type::I256, basic_inode_64<Db>, fake_inode, basic_inode_256<Db>>;
 
 template <typename Db> class basic_inode_256 : public basic_inode_256_parent<Db>
 {
     using parent_type = basic_inode_256_parent<Db>;
-    using inode48_type = typename parent_type::inode48_type;
+    using inode64_type = typename parent_type::inode64_type;
     using inode256_type = typename parent_type::inode256_type;
     using node_ptr = typename parent_type::node_ptr;
     using leaf_unique_ptr = typename parent_type::leaf_unique_ptr;
@@ -1090,33 +1223,27 @@ private:
 
     using basic_inode_256_parent<Db>::basic_inode_256_parent;
 
-    [[nodiscard]] constexpr iterator populate(unique_node_ptr<inode48_type, Db> source_node,
+    [[nodiscard]] constexpr iterator populate(unique_node_ptr<inode64_type, Db> source_node,
                                               leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
         assert(source_node->is_full());
         assert(this->is_min_size());
 
-        unsigned children_copied = 0;
-        unsigned i = 0;
-        while (true) {
-            const auto children_i = source_node->child_indices[i];
-            if (children_i == empty_child) {
-                children[i] = nullptr;
-            } else {
-                children[i] = source_node->children[children_i];
-                this->reparent(children[i], i);
-                ++children_copied;
-                if (children_copied == inode48_type::capacity)
-                    break;
-            }
-            ++i;
-        }
+        child_bits = source_node->child_bits;
+        assert(!child_bits.test(key_byte));
 
-        ++i;
-        for (; i < basic_inode_256::capacity; ++i)
-            children[i] = nullptr;
+        std::fill(children.begin(), children.end(), nullptr);
+
+        child_bits.for_each_bit([source{std::move(source_node)}, this](unsigned int i) {
+            const auto children_i = source->child_indices[i];
+            assert(children_i < inode64_type::capacity);
+
+            children[i] = source->children[children_i];
+            this->reparent(children[i], i);
+        });
 
         assert(children[key_byte] == nullptr);
+        child_bits.set(key_byte);
         children[key_byte] = child.release();
 
         return iterator(children[key_byte], key_byte, this->tagged_self());
@@ -1125,7 +1252,8 @@ private:
 public:
     [[nodiscard]] constexpr iterator add(leaf_unique_ptr child, std::uint8_t key_byte) noexcept
     {
-        assert(children[key_byte] == nullptr);
+        assert(!child_bits.test(key_byte) && children[key_byte] == nullptr);
+        child_bits.set(key_byte);
         children[key_byte] = child.release();
         ++this->children_count;
 
@@ -1134,7 +1262,8 @@ public:
 
     constexpr void remove(std::uint8_t child_index) noexcept
     {
-        assert(children[child_index] != nullptr);
+        assert(child_bits.test(child_index) && children[child_index] != nullptr);
+        child_bits.clear(child_index);
         children[child_index] = nullptr;
         --this->children_count;
     }
@@ -1146,9 +1275,16 @@ public:
 
     [[nodiscard]] constexpr const_iterator leftmost_child(unsigned int key_byte) noexcept
     {
-        const unsigned int i = find_first_non_null(children, key_byte);
-        return i < children.size() ? const_iterator(children[i], i, this->tagged_self())
-                                   : const_iterator{};
+        const unsigned int i = child_bits.find_first_set(key_byte);
+        return i < child_bits.size() ? const_iterator(children[i], i, this->tagged_self())
+                                     : const_iterator{};
+    }
+
+    [[nodiscard]] constexpr const_iterator rightmost_child(unsigned int end) noexcept
+    {
+        const unsigned int i = child_bits.find_last_set(end);
+        return i < child_bits.size() ? const_iterator(children[i], i, this->tagged_self())
+                                     : const_iterator{};
     }
 
     [[nodiscard]] constexpr std::pair<const_iterator, std::uint8_t> lower_bound(
@@ -1166,39 +1302,30 @@ public:
         this->reparent(child, key_byte);
     }
 
-    template <typename Function>
-    constexpr void for_each_child(Function func) const noexcept(noexcept(func(0, node_ptr{})))
-    {
-        for (unsigned i = 0; i != 256; ++i) {
-            const auto child_ptr = children[i];
-            if (child_ptr != nullptr) {
-                func(i, child_ptr);
-            }
-        }
-    }
-
     constexpr void delete_subtree(Db& db_instance) noexcept
     {
-        for_each_child(
-            [&db_instance](unsigned, node_ptr child) noexcept { db_instance.deallocate(child); });
+        child_bits.for_each_bit([&db_instance, this](unsigned key_byte) noexcept {
+            db_instance.deallocate(children[key_byte]);
+        });
     }
 
     [[gnu::cold, gnu::noinline]] void dump(std::ostream& os) const
     {
         parent_type::dump(os);
         os << ", key bytes & children:\n";
-        for_each_child([&os](unsigned i, node_ptr child) {
+        child_bits.for_each_bit([&os, this](unsigned key_byte) {
             os << ' ';
-            dump_byte(os, static_cast<std::uint8_t>(i));
+            dump_byte(os, key_byte);
             os << ' ';
-            parent_type::dump(os, child);
+            parent_type::dump(os, children[key_byte]);
         });
     }
 
 private:
-    children_array<node_ptr, basic_inode_256::capacity> children;
+    static_bitset<256> child_bits;
+    std::array<node_ptr, basic_inode_256::capacity> children;
 
-    friend inode48_type;
+    friend inode64_type;
 };
 
 } // namespace detail

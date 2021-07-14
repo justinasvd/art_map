@@ -158,6 +158,17 @@ private:
         return Traits::value_ref(l->prefix().unpack(), l->value());
     }
 
+    bool pop_parent() noexcept
+    {
+        // Parent node has been exhausted. Try going one level up
+        node_ = parent_;
+        std::tie(parent_, position) = inode()->pos_in_parent();
+#if defined(__SSE2__)
+        _mm_prefetch(parent_.get(), _MM_HINT_T0);
+#endif
+        return parent_ != nullptr;
+    }
+
     tree_iterator& forward_step() noexcept
     {
         assert(parent_.tag() != node_type::LEAF);
@@ -171,14 +182,7 @@ private:
                 *this = leaf;
                 return *this;
             }
-
-            // Parent node has been exhausted. Try going one level up
-            node_ = parent_;
-            std::tie(parent_, position) = inode()->pos_in_parent();
-#if defined(__SSE2__)
-            _mm_prefetch(parent_.get(), _MM_HINT_T0);
-#endif
-        } while (parent_ != nullptr);
+        } while (pop_parent());
 
         // Reset the final position if the node is not a leaf. This is done to ensure
         // that the final forward_step result is a correct end() iterator
@@ -207,28 +211,35 @@ private:
 
     void decrement() noexcept
     {
-        if (BOOST_UNLIKELY(!is_leaf())) {
-            // Nothing can do, not a leaf
+        if (BOOST_UNLIKELY(parent_ == nullptr)) {
+            if (!is_leaf()) {
+                // At the end() iterator. Just try and find the rightmost leaf
+                *this = INode::rightmost_leaf(node_, 255);
+                assert(is_leaf());
+            } else {
+                // Root leaf node, just set the position to start state
+                position = std::max(position - 1, 0);
+            }
             return;
         }
 
-        if (BOOST_UNLIKELY(!parent_)) {
-            // Root node, just set the position to start state
-            position = 0;
-            return;
-        }
+        tree_iterator save(*this);
 
-        // Non leaves cannot be decremented
-        //     assert(position <= -1);
-        //     btree_iterator save(*this);
-        //     while (position < 0 && !node->is_root()) {
-        //         assert(node->parent()->child(node->position()) == node);
-        //         position = node->position() - 1;
-        //         node = node->parent();
-        //     }
-        //     if (position < 0) {
-        //         *this = save;
-        //     }
+        do {
+            // Parent node is not yet exhausted, try to find a rightmost leaf
+            // from the current position.
+            if (position > 0) {
+                auto leaf = INode::rightmost_leaf(parent_, position - 1);
+                if (leaf.node()) {
+                    assert(leaf.parent() != nullptr);
+                    *this = leaf;
+                    return;
+                }
+            }
+        } while (pop_parent());
+
+        // No leaves found, probably at the begin. Just restore the iterator
+        *this = save;
     }
 
 private:

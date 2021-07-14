@@ -46,9 +46,10 @@ int main()
               << (static_cast<double>(db.current_memory_use()) / db.size())
               << " bytes per element\n";
 
+    std::size_t cnt;
     std::cout << "Erasing...\n";
-    for (auto it = std::next(values.begin(), 4); it != values.end(); ++it) {
-        std::size_t cnt = db.erase(test::key_of_value(*it));
+    for (auto it = std::next(values.begin(), 50); it != values.end(); ++it) {
+        cnt = db.erase(test::key_of_value(*it));
         assert(cnt == 1);
     }
 
@@ -67,6 +68,13 @@ int main()
     std::cout << "Lower bound: " << it->first << ": " << it->second << std::endl;
     it = db.upper_bound(52618);
     std::cout << "Upper bound: " << it->first << ": " << it->second << std::endl;
+
+    cnt = 0;
+    for (auto it = db.rbegin(); it != db.rend(); ++it) {
+        assert(cnt < db.size());
+        std::cout << it->first << ": " << it->second << std::endl;
+        ++cnt;
+    }
 
     db.clear();
 

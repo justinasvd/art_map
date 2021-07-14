@@ -14,7 +14,7 @@ namespace detail
 template <typename Db> class basic_inode_impl;
 template <typename Db> class basic_inode_4;
 template <typename Db> class basic_inode_16;
-template <typename Db> class basic_inode_48;
+template <typename Db> class basic_inode_64;
 template <typename Db> class basic_inode_256;
 
 template <typename Traits> class db
@@ -35,20 +35,20 @@ private:
     using inode = basic_inode_impl<self_t>;
     using inode_4 = basic_inode_4<self_t>;
     using inode_16 = basic_inode_16<self_t>;
-    using inode_48 = basic_inode_48<self_t>;
+    using inode_64 = basic_inode_64<self_t>;
     using inode_256 = basic_inode_256<self_t>;
 
     // We will be friends only with the nodes that have the same policy
     friend inode;
     friend inode_4;
     friend inode_16;
-    friend inode_48;
+    friend inode_64;
     friend inode_256;
 
     // Make deleters friends
     friend node_deleter<inode_4, self_t>;
     friend node_deleter<inode_16, self_t>;
-    friend node_deleter<inode_48, self_t>;
+    friend node_deleter<inode_64, self_t>;
     friend node_deleter<inode_256, self_t>;
     friend node_deleter<node_base, self_t>;
     friend node_deleter<leaf_type, self_t>;
@@ -226,7 +226,7 @@ public:
     [[nodiscard]] constexpr size_type current_memory_use() const noexcept
     {
         return memory_use<leaf_type>() + memory_use<inode_4>() + memory_use<inode_16>() +
-               memory_use<inode_48>() + memory_use<inode_256>();
+               memory_use<inode_64>() + memory_use<inode_256>();
     }
 
     [[nodiscard]] constexpr size_type leaf_count() const noexcept { return get_count<leaf_type>(); }
@@ -235,9 +235,9 @@ public:
     {
         return get_count<inode_16>();
     }
-    [[nodiscard]] constexpr size_type inode48_count() const noexcept
+    [[nodiscard]] constexpr size_type inode64_count() const noexcept
     {
-        return get_count<inode_48>();
+        return get_count<inode_64>();
     }
     [[nodiscard]] constexpr size_type inode256_count() const noexcept
     {
@@ -317,7 +317,7 @@ private:
     template <typename Node> void deallocate_node(Node* node) noexcept;
     void deallocate(inode_4* node) noexcept { deallocate_node(node); }
     void deallocate(inode_16* node) noexcept { deallocate_node(node); }
-    void deallocate(inode_48* node) noexcept { deallocate_node(node); }
+    void deallocate(inode_64* node) noexcept { deallocate_node(node); }
     void deallocate(inode_256* node) noexcept { deallocate_node(node); }
     void deallocate(leaf_type* leaf) noexcept(std::is_nothrow_destructible<mapped_type>::value);
     void deallocate(node_ptr node) noexcept(std::is_nothrow_destructible<mapped_type>::value);
@@ -391,7 +391,7 @@ private:
         size_type instances;
     };
     using node_stats_type = std::tuple<counter<leaf_type>, counter<inode_4>, counter<inode_16>,
-                                       counter<inode_48>, counter<inode_256>>;
+                                       counter<inode_64>, counter<inode_256>>;
     node_stats_type count_{};
 };
 

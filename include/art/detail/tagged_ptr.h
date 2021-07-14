@@ -43,11 +43,10 @@ struct direct final {
         return static_cast<tag_type>(uintptr(p) & tag_mask);
     }
 
-    [[nodiscard]] static constexpr T* tag(const T* p, tag_type value)
+    [[nodiscard]] static constexpr T* tag(const T* p, tag_type value) noexcept
     {
         // Take care that the tag value does not step on pointer bits
-        if (BOOST_UNLIKELY(ptr_mask & static_cast<std::uintptr_t>(value)))
-            throw std::overflow_error("tagged::direct: tag overflow");
+        assert(!(ptr_mask & static_cast<std::uintptr_t>(value)));
         return reinterpret_cast<T*>(ptr_bits(p) | static_cast<std::uintptr_t>(value));
     }
 };

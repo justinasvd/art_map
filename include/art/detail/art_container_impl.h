@@ -202,8 +202,8 @@ inline void db<P>::deallocate(node_ptr node) noexcept(
     case node_type::I16:
         deallocate_subtree(static_cast<inode_16*>(node.get()));
         break;
-    case node_type::I48:
-        deallocate_subtree(static_cast<inode_48*>(node.get()));
+    case node_type::I64:
+        deallocate_subtree(static_cast<inode_64*>(node.get()));
         break;
     case node_type::I256:
         deallocate_subtree(static_cast<inode_256*>(node.get()));
@@ -324,8 +324,8 @@ inline typename db<P>::iterator db<P>::internal_emplace(iterator hint, bitwise_k
         return grow_node<inode_4>(hint, std::move(leaf_ptr), key_byte);
     case node_type::I16:
         return grow_node<inode_16>(hint, std::move(leaf_ptr), key_byte);
-    case node_type::I48:
-        return grow_node<inode_48>(hint, std::move(leaf_ptr), key_byte);
+    case node_type::I64:
+        return grow_node<inode_64>(hint, std::move(leaf_ptr), key_byte);
     case node_type::I256:
         return static_cast<inode_256*>(pdst)->add(std::move(leaf_ptr), key_byte);
     default:
@@ -437,8 +437,8 @@ template <typename P> inline typename db<P>::iterator db<P>::internal_erase(iter
         case node_type::I16:
             after_erase = shrink_node<inode_16>(pos);
             break;
-        case node_type::I48:
-            after_erase = shrink_node<inode_48>(pos);
+        case node_type::I64:
+            after_erase = shrink_node<inode_64>(pos);
             break;
         case node_type::I256:
             after_erase = shrink_node<inode_256>(pos);

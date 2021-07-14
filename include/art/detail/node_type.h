@@ -8,7 +8,7 @@ namespace art
 namespace detail
 {
 
-enum class node_type : std::uint8_t { LEAF, I4, I16, I48, I256 };
+enum class node_type : std::uint8_t { LEAF, I4, I16, I64, I256 };
 
 } // namespace detail
 } // namespace art
