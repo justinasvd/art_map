@@ -11,6 +11,14 @@
 
 #if defined(__SSE2__)
 #include <xmmintrin.h>
+#elif defined(__ARM_NEON)
+// Apple Silicon / ARM: map the SSE intrinsics used below onto NEON via sse2neon
+// (single MIT header: github.com/DLTcollab/sse2neon) -- add it to the include path.
+#if __has_include(<sse2neon.h>)
+#include <sse2neon.h>
+#else
+#error "art_map on ARM needs sse2neon.h on the include path (github.com/DLTcollab/sse2neon)"
+#endif
 #endif
 
 namespace art
@@ -165,6 +173,8 @@ private:
         std::tie(parent_, position) = inode()->pos_in_parent();
 #if defined(__SSE2__)
         _mm_prefetch(parent_.get(), _MM_HINT_T0);
+#elif defined(__ARM_NEON)
+        __builtin_prefetch(parent_.get());
 #endif
         return parent_ != nullptr;
     }

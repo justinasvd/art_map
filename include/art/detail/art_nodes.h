@@ -12,6 +12,14 @@
 #if defined(__SSE2__)
 #include <emmintrin.h>
 #include <smmintrin.h>
+#elif defined(__ARM_NEON)
+// Apple Silicon / ARM: map the SSE intrinsics used below onto NEON via sse2neon
+// (single MIT header: github.com/DLTcollab/sse2neon) -- add it to the include path.
+#if __has_include(<sse2neon.h>)
+#include <sse2neon.h>
+#else
+#error "art_map on ARM needs sse2neon.h on the include path (github.com/DLTcollab/sse2neon)"
+#endif
 #endif
 
 #include <algorithm>
@@ -41,7 +49,7 @@ namespace detail
 
 #define ART_DETAIL_CANNOT_HAPPEN() cannot_happen(__FILE__, __LINE__, __func__)
 
-#if defined(__SSE2__)
+#if defined(__SSE2__) || defined(__ARM_NEON)
 namespace sse2
 {
 // Idea from https://stackoverflow.com/a/32945715/80458
@@ -97,7 +105,7 @@ template <typename T, unsigned int Capacity> union simd_array {
     [[nodiscard]] constexpr const_iterator begin() const noexcept { return data.begin(); }
     [[nodiscard]] constexpr const_iterator end() const noexcept { return data.end(); }
 
-#if defined(__SSE2__)
+#if defined(__SSE2__) || defined(__ARM_NEON)
     static constexpr unsigned int pack_size = sizeof(__m128i) / sizeof(T);
     static_assert(pack_size * sizeof(T) == sizeof(__m128i),
                   "Cannot pack array values to SIMD data");
@@ -632,7 +640,7 @@ public:
 
     [[nodiscard, gnu::pure]] const_iterator find_child(std::uint8_t key_byte) noexcept
     {
-#if defined(__SSE2__)
+#if defined(__SSE2__) || defined(__ARM_NEON)
         const unsigned int bit_field =
             sse2::key_equal_mask(_mm_cvtsi32_si128(keys.integer), key_byte, this->children_count);
         if (bit_field != 0) {
@@ -713,7 +721,7 @@ private:
     [[nodiscard, gnu::pure]] constexpr unsigned key_upper_bound(
         std::uint8_t key_byte) const noexcept
     {
-#if defined(__SSE2__)
+#if defined(__SSE2__) || defined(__ARM_NEON)
         return sse2::key_upper_bound(_mm_cvtsi32_si128(keys.integer), key_byte,
                                      this->children_count);
 #else // No SSE2
@@ -882,7 +890,7 @@ public:
 
     [[nodiscard, gnu::pure]] constexpr const_iterator find_child(std::uint8_t key_byte) noexcept
     {
-#if defined(__SSE2__)
+#if defined(__SSE2__) || defined(__ARM_NEON)
         const unsigned int bit_field =
             sse2::key_equal_mask(keys.sse, key_byte, this->children_count);
         if (bit_field != 0) {
@@ -955,7 +963,7 @@ private:
                                   keys.byte_array.cbegin() + children_count) >=
                keys.byte_array.cbegin() + children_count);
 
-#if defined(__SSE2__)
+#if defined(__SSE2__) || defined(__ARM_NEON)
         const uint8_t result = sse2::key_upper_bound(keys.sse, key_byte, children_count);
 #else
         const std::uint8_t result =
